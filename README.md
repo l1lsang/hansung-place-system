@@ -43,7 +43,7 @@ Firebase 중심으로 구성되어 있던 기존 데이터 구조를 관계형 �
 Spring Boot, PostgreSQL, AWS 기반으로 구성했습니다.
 
 <p align="center">
-  <img src="./docs/system-architecture.png" width="900">
+  <img src="./docs/시스템아키텍처.png" width="900">
 </p>
 ### Architecture
 
