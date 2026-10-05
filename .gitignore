@@ -1,0 +1,152 @@
+# ==============================
+# Frontend - React / Vite
+# ==============================
+
+node_modules/
+dist/
+dist-ssr/
+.vite/
+.npm/
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/install-state.gz
+.pnp.*
+.cache/
+coverage/
+*.tsbuildinfo
+
+# Keep package.json and package-manager lockfiles in Git.
+
+*.local
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Local registry authentication (use environment variables for shared config).
+.npmrc
+
+# Private keys, credential stores and service-account credentials.
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+.aws/
+.ssh/
+/secrets/
+/credentials/
+*service-account*.json
+*firebase-adminsdk*.json
+
+
+# ==============================
+# Backend - Spring Boot / Gradle
+# ==============================
+
+.gradle/
+build/
+out/
+*.class
+*.jar
+*.war
+*.ear
+
+# Gradle
+!**/gradle/wrapper/gradle-wrapper.jar
+
+# Keep build.gradle, settings.gradle, gradlew, gradlew.bat and wrapper properties.
+
+# Maven (혹시 사용할 경우)
+target/
+
+
+# ==============================
+# Spring Boot local config
+# ==============================
+
+application-local.properties
+application-local.yml
+application-local.yaml
+
+application-secret.properties
+application-secret.yml
+application-secret.yaml
+application-secrets.properties
+application-secrets.yml
+application-secrets.yaml
+application-*.local.properties
+application-*.local.yml
+application-*.local.yaml
+
+# Shared application.properties contains environment references and stays tracked.
+
+
+# ==============================
+# IDE
+# ==============================
+
+.idea/
+*.iml
+*.iws
+*.ipr
+.classpath
+.project
+.settings/
+.factorypath
+
+.vscode/
+
+
+# ==============================
+# OS
+# ==============================
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+
+# ==============================
+# Logs
+# ==============================
+
+*.log
+logs/
+*.hprof
+*.jfr
+hs_err_pid*
+replay_pid*
+
+
+# ==============================
+# Docker / Database
+# ==============================
+
+postgres-data/
+docker-data/
+backups/
+db-backups/
+database-backups/
+*.dump
+*.backup
+*.bak
+*.sql.gz
+*.sql.zip
+*.sql.bz2
+*.sql.xz
+
+# Keep plain SQL migrations under backend/src/main/resources/db/migration/.
+
+
+# ==============================
+# Temporary files
+# ==============================
+
+*.tmp
+*.temp
+*.swp
+*~
