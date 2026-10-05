@@ -11,6 +11,7 @@ type Props = {
   selectedId: number | undefined
   checking: boolean
   onSelect: (seat: Seat) => void
+  selectionLink?: boolean
 }
 
 function MapCanvas({ seats, statuses, selectedId, checking, onSelect }: Props) {
@@ -129,7 +130,7 @@ export function ReadingRoomSeatMap(props: Props) {
             '원하는 좌석을 선택해주세요.'
           )}
         </p>
-        {selected && (
+        {selected && props.selectionLink !== false && (
           <a href="#booking-summary" className="text-link">
             예약 내용 확인 →
           </a>

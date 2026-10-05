@@ -22,7 +22,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   })
   function clearPrivate() {
     cache.removeQueries({
-      predicate: (q) => ['reservations', 'reservation', 'admin'].includes(String(q.queryKey[0])),
+      predicate: (q) =>
+        ['reservations', 'reservation', 'admin', 'seat-availability'].includes(
+          String(q.queryKey[0]),
+        ),
     })
   }
   useEffect(
@@ -31,7 +34,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         cache.setQueryData(['auth'], null)
         cache.removeQueries({
           predicate: (q) =>
-            ['reservations', 'reservation', 'admin'].includes(String(q.queryKey[0])),
+            ['reservations', 'reservation', 'admin', 'seat-availability'].includes(
+              String(q.queryKey[0]),
+            ),
         })
       }),
     [cache],

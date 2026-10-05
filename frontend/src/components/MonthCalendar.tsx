@@ -4,9 +4,11 @@ import { today } from '../utils/time'
 export function MonthCalendar({
   value,
   onChange,
+  maximum,
 }: {
   value: string
   onChange: (date: string) => void
+  maximum?: string
 }) {
   const [month, setMonth] = useState(value.slice(0, 7))
   const first = new Date(`${month}-01T12:00:00Z`)
@@ -35,7 +37,12 @@ export function MonthCalendar({
         <strong>
           {first.getUTCFullYear()}년 {first.getUTCMonth() + 1}월
         </strong>
-        <button className="icon-button" aria-label="다음 달" onClick={() => move(1)}>
+        <button
+          className="icon-button"
+          aria-label="다음 달"
+          disabled={Boolean(maximum && month >= maximum.slice(0, 7))}
+          onClick={() => move(1)}
+        >
           <ChevronRight size={18} />
         </button>
       </div>
@@ -54,7 +61,7 @@ export function MonthCalendar({
             <button
               key={date}
               className={date === value ? 'selected' : ''}
-              disabled={date < minimum}
+              disabled={date < minimum || Boolean(maximum && date > maximum)}
               aria-pressed={date === value}
               aria-label={`${date}${date === minimum ? ', 오늘' : ''}`}
               onClick={() => onChange(date)}

@@ -8,8 +8,20 @@ import type {
   SpaceBlock,
   SpaceInput,
   TimeRange,
+  BookingRules,
+  BookingRulesInput,
+  AdminSummary,
 } from '../types/api'
 export const adminApi = {
+  summary: (date: string, signal?: AbortSignal) =>
+    request<AdminSummary>('/api/admin/summary' + query({ date }), { signal }),
+  cancelReservation: (id: number, reason: string) =>
+    request<Reservation>(`/api/admin/reservations/${id}/cancel`, {
+      method: 'POST',
+      body: { reason },
+    }),
+  saveBookingRules: (id: number, body: BookingRulesInput) =>
+    request<BookingRules>(`/api/admin/spaces/${id}/booking-rules`, { method: 'PUT', body }),
   spaces: (page = 0, signal?: AbortSignal) =>
     request<Page<Space>>('/api/admin/spaces' + query({ page, size: 20 }), { signal }),
   createSpace: (body: SpaceInput) => request<Space>('/api/admin/spaces', { method: 'POST', body }),

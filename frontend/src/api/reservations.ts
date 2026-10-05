@@ -8,4 +8,8 @@ export const reservationsApi = {
   create: (body: ReservationInput) =>
     request<Reservation>('/api/reservations', { method: 'POST', body }),
   cancel: (id: number) => request<void>(`/api/reservations/${id}`, { method: 'DELETE' }),
+  startSeatUse: (spaceId: number, seatId: number) =>
+    request<Reservation>(`/api/spaces/${spaceId}/seats/${seatId}/use`, { method: 'POST' }),
+  returnSeat: (id: number) =>
+    request<Reservation>(`/api/reservations/${id}/return`, { method: 'POST' }),
 }

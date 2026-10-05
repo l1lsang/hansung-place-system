@@ -10,7 +10,7 @@ import { SeatPicker } from '../components/SeatPicker'
 import { BookingForm } from '../components/BookingForm'
 import { ReadingRoomSeatMap } from '../components/ReadingRoomSeatMap'
 import { AuthContext, type AuthValue } from '../hooks/authContext'
-import type { Availability, Page, Seat, Space } from '../types/api'
+import type { Availability, Seat, Space, SeatAvailability } from '../types/api'
 import type { ReactNode } from 'react'
 
 const start = '2035-06-01T01:00:00.000Z'
@@ -22,8 +22,31 @@ const seats: Seat[] = [
   { id: 9101, spaceId: 1, seatNumber: '101', status: 'AVAILABLE' },
   { id: 9162, spaceId: 1, seatNumber: '162', status: 'AVAILABLE' },
 ]
-function page(content: Seat[], number = 0, totalPages = 1): Page<Seat> {
-  return { content, page: number, size: 100, totalElements: seats.length, totalPages }
+function batch(content: Seat[], available = true, from = start): SeatAvailability {
+  return {
+    spaceId: 1,
+    startTime: from,
+    endTime: end,
+    bookingEnabled: true,
+    policyConfigured: false,
+    instant: false,
+    instantUseMinutes: 180,
+    userHasSeatUse: false,
+    seats: {
+      page: 0,
+      size: 100,
+      totalElements: content.length,
+      totalPages: 1,
+      content: content.map((seat) => ({
+        ...seat,
+        available: available && seat.id !== 9010 && seat.id !== 9101 && seat.status === 'AVAILABLE',
+        availableUntil: available ? end : null,
+        occupiedUntil: null,
+        mine: false,
+        reservationId: null,
+      })),
+    },
+  }
 }
 function availability(seatId: number, available = true, from = start): Availability {
   return {
@@ -37,7 +60,22 @@ function availability(seatId: number, available = true, from = start): Availabil
   }
 }
 function provider(children: ReactNode, client: QueryClient) {
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  return (
+    <QueryClientProvider client={client}>
+      <AuthContext.Provider
+        value={{
+          user: null,
+          loading: false,
+          error: null,
+          refresh: vi.fn(),
+          login: vi.fn(),
+          logout: vi.fn(),
+        }}
+      >
+        {children}
+      </AuthContext.Provider>
+    </QueryClientProvider>
+  )
 }
 function queryClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -45,18 +83,20 @@ function queryClient() {
 afterEach(() => vi.restoreAllMocks())
 
 describe('interactive reading room map', () => {
-  it('loads every seat page, uses seatNumber for position and real IDs for selection, and blocks unsafe states', async () => {
-    const list = vi
-      .spyOn(spacesApi, 'seats')
-      .mockImplementation(async (_, number) =>
-        page(number === 0 ? seats.slice(0, 3) : seats.slice(3), number, 2),
-      )
-    const check = vi
-      .spyOn(spacesApi, 'availability')
-      .mockImplementation(async (_, from, __, id) => {
-        if (id === 9101) throw new Error('temporary network error')
-        return availability(id!, id !== 9010, from)
+  it('loads every batch page, maps seat numbers to real IDs, and blocks unavailable seats', async () => {
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input))
+      const number = Number(url.searchParams.get('page'))
+      const response = batch(number === 0 ? seats.slice(0, 3) : seats.slice(3))
+      response.seats.totalPages = 2
+      response.seats.page = number
+      response.seats.totalElements = 5
+      return new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
       })
+    })
+    vi.stubGlobal('fetch', fetcher)
     const select = vi.fn()
     render(
       provider(
@@ -72,22 +112,21 @@ describe('interactive reading room map', () => {
       ),
     )
     const last = await screen.findByRole('button', { name: '162번 좌석, 예약 가능' })
-    expect(list).toHaveBeenCalledWith(1, 0, 100, expect.any(AbortSignal))
-    expect(list).toHaveBeenCalledWith(1, 1, 100, expect.any(AbortSignal))
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(String(fetcher.mock.calls[1][0])).toContain('/seats/availability?')
+    expect(String(fetcher.mock.calls[1][0])).toContain('page=1')
     expect(screen.queryByRole('button', { name: /002번 좌석/ })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '010번 좌석, 예약 불가' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '075번 좌석, 운영 중지' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '101번 좌석, 확인 실패' })).toBeDisabled()
-    expect(check.mock.calls.some((call) => call[3] === 9075)).toBe(false)
+    expect(screen.getByRole('button', { name: '101번 좌석, 예약 불가' })).toBeDisabled()
     await userEvent.click(last)
-    expect(select).toHaveBeenCalledWith(seats[4])
+    expect(select).toHaveBeenCalledWith(expect.objectContaining(seats[4]))
     expect(parseFloat(last.style.left)).toBeGreaterThan(85)
     expect(parseFloat(last.style.top)).toBeGreaterThan(90)
   })
 
   it('prevents clicking cached availability while a changed time is being checked', async () => {
-    vi.spyOn(spacesApi, 'seats').mockResolvedValue(page([seats[0]]))
-    const check = vi.spyOn(spacesApi, 'availability').mockResolvedValue(availability(9001))
+    const check = vi.spyOn(spacesApi, 'seatAvailability').mockResolvedValue(batch([seats[0]]))
     const client = queryClient()
     const select = vi.fn()
     const picker = (from: string) =>
@@ -106,7 +145,7 @@ describe('interactive reading room map', () => {
     expect(
       await screen.findByRole('button', { name: '001번 좌석, 선택됨, 예약 가능' }),
     ).toBeEnabled()
-    let finish!: (result: Availability) => void
+    let finish!: (result: SeatAvailability) => void
     check.mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -119,7 +158,7 @@ describe('interactive reading room map', () => {
     expect(pending).toBeDisabled()
     await userEvent.click(pending)
     expect(select).not.toHaveBeenCalled()
-    await act(async () => finish(availability(9001, false, next)))
+    await act(async () => finish(batch([seats[0]], false, next)))
     expect(
       await screen.findByRole('button', { name: '001번 좌석, 선택됨, 예약 불가' }),
     ).toBeDisabled()
@@ -148,7 +187,7 @@ describe('interactive reading room map', () => {
   })
 
   it('carries an image selection into the confirmed reservation payload', async () => {
-    vi.spyOn(spacesApi, 'seats').mockResolvedValue(page([seats[4]]))
+    vi.spyOn(spacesApi, 'seatAvailability').mockResolvedValue(batch([seats[4]]))
     vi.spyOn(spacesApi, 'availability').mockResolvedValue(availability(9162))
     const create = vi.spyOn(reservationsApi, 'create').mockResolvedValue({
       id: 44,

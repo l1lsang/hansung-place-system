@@ -39,7 +39,8 @@ Firebase 중심으로 구성되어 있던 기존 데이터 구조를 관계형 �
 ## 3. 서비스 화면
 
 React 프론트엔드를 `frontend/`에 구현했습니다. [실행·구조·검증 안내](frontend/README.md),
-[Vercel 배포 설정](docs/vercel-deployment.md), [운영시간·시험기간 API](docs/operating-policy.md)를 참고하세요.
+[Vercel 배포 설정](docs/vercel-deployment.md), [운영시간·시험기간 API](docs/operating-policy.md),
+[즉시 이용·반납·관리자 운영 API](docs/reservation-operations.md)를 참고하세요.
 
 ```sh
 cd frontend
@@ -133,6 +134,8 @@ V2에서 로컬 인증용 `user_credentials`, 담당 공간용 `admin_space_perm
 차단 해제용 `space_blocks.cancelled_at`을 추가했습니다.
 V3는 `space_operating_policies`, `space_operating_hours`로 공간별 운영시간과 시험기간 예외를 관리합니다.
 기존 데이터와 전역 `system_settings`는 보존합니다. 부서 테이블과 예약 승인 상태는 아직 없습니다.
+V4는 공간별 예약 제한용 `space_booking_rules`, 처리 이력용 `reservation_actions`,
+실제 좌석 반납 시간 `reservations.ended_at`을 추가합니다.
 
 ## 7. API
 
@@ -152,12 +155,20 @@ OpenAPI JSON: **http://localhost:8080/v3/api-docs**
 | GET | `/api/spaces/{spaceId}` | 공간 상세 |
 | GET | `/api/spaces/{spaceId}/availability` | 요청 구간의 비점유 시간 |
 | GET | `/api/spaces/{spaceId}/seats` | 좌석 목록/운영 상태 |
+| GET | `/api/spaces/{spaceId}/seats/availability` | 선택 시간의 좌석별 가능 여부 일괄 조회 |
+| GET | `/api/spaces/{spaceId}/seat-status` | 현재 즉시 이용 가능 좌석·종료 예정 시간 |
+| POST | `/api/spaces/{spaceId}/seats/{seatId}/use` | 서버 시각 기준 즉시 이용 시작 |
+| GET | `/api/spaces/{spaceId}/booking-rules` | 예약 제한·즉시 이용시간 조회 |
+| PUT | `/api/admin/spaces/{spaceId}/booking-rules` | 담당 공간 예약 제한 설정 |
 | GET | `/api/spaces/{spaceId}/policy` | 공간 운영시간·시험기간 정책 |
 | PUT | `/api/admin/spaces/{spaceId}/policy` | 담당 공간 운영 정책 전체 저장 |
 | POST | `/api/reservations` | 예약 생성 |
 | GET | `/api/reservations` | 본인의 예약 목록 |
 | GET | `/api/reservations/{reservationId}` | 본인의 예약 상세 |
 | DELETE | `/api/reservations/{reservationId}` | 본인의 예약 취소 (행 보존) |
+| POST | `/api/reservations/{reservationId}/return` | 본인 좌석 반납 (원래 시간·행 보존) |
+| POST | `/api/admin/reservations/{reservationId}/cancel` | 사유를 기록하는 담당 공간 강제 취소·종료 |
+| GET | `/api/admin/summary` | 담당 공간 일별 예약 통계 |
 | GET | `/api/admin/spaces` | 담당 공간 목록 |
 | POST | `/api/admin/spaces` | 공간 등록 및 등록자에게 해당 공간 권한 부여 |
 | PATCH | `/api/admin/spaces/{spaceId}` | 담당 공간 수정 |
@@ -199,6 +210,8 @@ availability는 `startTime`, `endTime`을 필수로 받으며 한 번에 최대 
 응답의 `available`은 예약/차단 시간을 뺀 구간 목록입니다. 활성화된 운영 정책이 있으면 운영시간·시험기간도 반영하며
 `policyScope=OPERATING_HOURS_AND_OCCUPANCY`입니다. 정책이 없거나 꺼져 있으면 `OCCUPANCY_ONLY`로 이전 동작을 유지합니다.
 조회 후 다른 예약이 들어올 수 있어 POST에서 다시 검증합니다. [정책 상세](docs/operating-policy.md)
+좌석 일괄 현황·즉시 이용·반납·강제 취소·예약 제한의 요청/응답과 화면 연결은
+[예약·운영 API 안내](docs/reservation-operations.md)에 정리했습니다.
 
 ### 예약 생성 예시
 
@@ -286,9 +299,9 @@ docker compose exec postgres psql -U hsp -d hsp -c "SELECT * FROM public.flyway_
 
 #### 이후 변경 추가
 
-1. `backend/src/main/resources/db/migration/V4__설명.sql`처럼 적용된 최신 버전 다음 파일을 추가한다.
-   현재 V3까지 사용했다. `V`는 대문자이며 버전 뒤 밑줄은 두 개다.
-2. 필요한 변경 SQL을 작성하고 별도 테스트 DB에서 검증한다. 적용한 V1/V2/V3 파일은 수정하지 않고 후속 변경을 V4, V5로 추가한다.
+1. `backend/src/main/resources/db/migration/V5__설명.sql`처럼 적용된 최신 버전 다음 파일을 추가한다.
+   현재 V4까지 사용했다. `V`는 대문자이며 버전 뒤 밑줄은 두 개다.
+2. 필요한 변경 SQL을 작성하고 별도 테스트 DB에서 검증한다. 적용한 V1~V4 파일은 수정하지 않고 후속 변경을 V5, V6으로 추가한다.
 3. `docker compose up --build -d`로 migration이 포함된 backend 이미지를 재빌드한다.
 4. 시작 로그와 `flyway_schema_history`에서 새 버전의 `SQL`, `success=true`를 확인한다.
 

@@ -44,7 +44,7 @@ public class AvailabilityService {
         if (seatId != null) enabled &= "AVAILABLE".equals(seats.require(spaceId, seatId).getStatus());
         var occupied = new ArrayList<TimeRange>();
         reservations.findOverlapping(spaceId, seatId, start, end)
-                .forEach(r -> occupied.add(new TimeRange(r.getStartTime(), r.getEndTime())));
+                .forEach(r -> occupied.add(new TimeRange(r.getStartTime(), r.effectiveEnd())));
         blocks.findOverlapping(spaceId, start, end)
                 .forEach(b -> occupied.add(new TimeRange(b.getStartTime(), b.getEndTime())));
         var policy = policies.find(spaceId);

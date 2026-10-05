@@ -1,6 +1,10 @@
 package com.hansung.hsp.space;
 
 import com.hansung.hsp.common.PageResponse;
+import com.hansung.hsp.auth.HspPrincipal;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.http.CacheControl;
+import org.springframework.http.ResponseEntity;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.*;
@@ -15,10 +19,13 @@ public class SpaceController {
     private final SpaceService spaces;
     private final SeatService seats;
     private final AvailabilityService availability;
-    public SpaceController(SpaceService spaces, SeatService seats, AvailabilityService availability) {
+    private final SeatAvailabilityService seatAvailability;
+    public SpaceController(SpaceService spaces, SeatService seats, AvailabilityService availability,
+            SeatAvailabilityService seatAvailability) {
         this.spaces = spaces;
         this.seats = seats;
         this.availability = availability;
+        this.seatAvailability = seatAvailability;
     }
 
     @GetMapping
@@ -52,5 +59,25 @@ public class SpaceController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant startTime,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant endTime) {
         return availability.get(spaceId, seatId, startTime, endTime);
+    }
+
+    @GetMapping("/{spaceId}/seats/availability")
+    @Operation(summary = "좌석별 예약 가능 여부 일괄 조회", description = "페이지당 최대 100개. 본인 예약 ID만 반환합니다.")
+    public ResponseEntity<SeatAvailabilityResponse> seatAvailability(@PathVariable @Positive Long spaceId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant startTime,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant endTime,
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "100") int size,
+            @AuthenticationPrincipal HspPrincipal principal) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(seatAvailability.get(spaceId,
+                startTime, endTime, principal == null ? null : principal.getUserId(), page, size));
+    }
+
+    @GetMapping("/{spaceId}/seat-status")
+    @Operation(summary = "지금 이용 가능한 좌석과 종료 예정 시각", description = "서버 현재 시각 기준. 운영 종료·차단·다음 예약 직전까지만 즉시 이용할 수 있습니다.")
+    public ResponseEntity<SeatAvailabilityResponse> seatStatus(@PathVariable @Positive Long spaceId,
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "100") int size,
+            @AuthenticationPrincipal HspPrincipal principal) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(seatAvailability.now(spaceId,
+                principal == null ? null : principal.getUserId(), page, size));
     }
 }

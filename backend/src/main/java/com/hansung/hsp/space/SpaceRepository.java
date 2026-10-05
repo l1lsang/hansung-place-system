@@ -19,5 +19,10 @@ public interface SpaceRepository extends JpaRepository<Space, Long>, JpaSpecific
             )
             """)
     Page<Space> findManagedSpaces(@Param("adminId") Long adminId, Pageable pageable);
-}
 
+    @Query("""
+            select count(s) from Space s where (:disabledOnly = false or s.bookingEnabled = false)
+            and exists (select p.id from AdminSpacePermission p where p.userId = :adminId and p.spaceId = s.id)
+            """)
+    long countManaged(@Param("adminId") Long adminId, @Param("disabledOnly") boolean disabledOnly);
+}

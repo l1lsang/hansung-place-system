@@ -10,6 +10,8 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
 import java.net.URI;
+import java.time.LocalDate;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.*;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -22,11 +24,21 @@ public class AdminController {
     private final AdminSpaceService spaces;
     private final ReservationService reservations;
     private final SpaceBlockService blocks;
+    private final AdminSummaryService summary;
 
-    public AdminController(AdminSpaceService spaces, ReservationService reservations, SpaceBlockService blocks) {
+    public AdminController(AdminSpaceService spaces, ReservationService reservations, SpaceBlockService blocks,
+            AdminSummaryService summary) {
         this.spaces = spaces;
         this.reservations = reservations;
         this.blocks = blocks;
+        this.summary = summary;
+    }
+
+    @GetMapping("/summary")
+    @Operation(summary = "담당 공간의 일별 예약 통계", description = "KST 기준. 취소 제외, 자정 경계와 실제 좌석 반납 시각을 반영한 예약 분 합계입니다.")
+    public AdminSummaryService.Summary summary(@AuthenticationPrincipal HspPrincipal principal,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return summary.get(principal.getUserId(), date);
     }
 
     @GetMapping("/spaces")
@@ -63,6 +75,13 @@ public class AdminController {
         return reservations.getManaged(principal.getUserId(), reservationId);
     }
 
+    @PostMapping("/reservations/{reservationId}/cancel")
+    @Operation(summary = "담당 공간 예약 강제 취소·좌석 종료", description = "사유 필수. 예약·참여자·원래 시간과 처리자 이력을 보존합니다.")
+    public ReservationResponse cancelReservation(@AuthenticationPrincipal HspPrincipal principal,
+            @PathVariable @Positive Long reservationId, @Valid @RequestBody ReservationCancelRequest input) {
+        return reservations.cancelManaged(principal.getUserId(), reservationId, input.reason());
+    }
+
     @GetMapping("/spaces/{spaceId}/blocks")
     public PageResponse<SpaceBlockResponse> blocks(@AuthenticationPrincipal HspPrincipal principal,
             @PathVariable @Positive Long spaceId, @RequestParam(defaultValue = "0") int page,
@@ -84,4 +103,3 @@ public class AdminController {
         blocks.cancel(principal.getUserId(), blockId);
     }
 }
-

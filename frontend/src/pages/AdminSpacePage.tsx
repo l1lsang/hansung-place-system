@@ -9,6 +9,8 @@ import { Empty, ErrorNotice, Loading, PageHeading } from '../components/ui'
 import { SpaceForm } from '../components/SpaceForm'
 import { PolicyEditor } from '../components/PolicyEditor'
 import { BlockManager } from '../components/BlockManager'
+import { BookingRulesEditor } from '../components/BookingRulesEditor'
+import { facilityFor } from '../assets/spaceMedia'
 export default function AdminSpacePage() {
   const { spaceId } = useParams()
   const create = spaceId === 'new'
@@ -34,6 +36,11 @@ export default function AdminSpacePage() {
     queryKey: ['policy', id],
     enabled: valid && scope.isSuccess,
     queryFn: ({ signal }) => spacesApi.policy(id, signal),
+  })
+  const rules = useQuery({
+    queryKey: ['booking-rules', id],
+    enabled: valid && scope.isSuccess,
+    queryFn: ({ signal }) => spacesApi.bookingRules(id, signal),
   })
   if (!create && !valid) return <Empty title="올바르지 않은 공간 주소입니다." />
   if (!create && (scope.isError || space.isError))
@@ -69,6 +76,7 @@ export default function AdminSpacePage() {
           {[
             { key: 'info', name: '기본 정보' },
             { key: 'policy', name: '운영시간·시험기간' },
+            { key: 'rules', name: '예약 제한·즉시 이용' },
             { key: 'blocks', name: '차단 일정' },
           ].map((t) => (
             <button
@@ -122,9 +130,22 @@ export default function AdminSpacePage() {
           ) : policy.isError ? (
             <ErrorNotice error={policy.error} retry={() => void policy.refetch()} />
           ) : (
-            <PolicyEditor key={id} policy={policy.data} />
+            <PolicyEditor
+              key={id}
+              policy={policy.data}
+              facility={space.data && facilityFor(space.data)?.id}
+            />
           ))}
         {!create && tab === 'blocks' && <BlockManager spaceId={id} />}
+        {!create &&
+          tab === 'rules' &&
+          (rules.isPending ? (
+            <Loading />
+          ) : rules.isError ? (
+            <ErrorNotice error={rules.error} retry={() => void rules.refetch()} />
+          ) : (
+            <BookingRulesEditor key={id} rules={rules.data} />
+          ))}
       </section>
     </>
   )

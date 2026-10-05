@@ -21,15 +21,15 @@ import { useState } from 'react'
 import { useNow } from '../hooks/useNow'
 import { FloorPlan } from '../components/FloorPlan'
 import { facilityFor } from '../assets/spaceMedia'
+import { InstantSeatUse } from '../components/InstantSeatUse'
+import { bookingRuleMessage } from '../utils/bookingRules'
+import { today } from '../utils/time'
 
-const times = Array.from(
-  { length: 49 },
-  (_, i) => `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`,
-)
 export default function SpaceDetailPage() {
   const { spaceId } = useParams()
   const id = Number(spaceId)
   const [params, setParams] = useSearchParams()
+  const requestedInstant = params.get('mode') === 'instant'
   const [defaults] = useState(defaultSelection)
   const now = useNow()
   const date = validDate(params.get('date') ?? '') ? params.get('date')! : defaults.date
@@ -58,9 +58,23 @@ export default function SpaceDetailPage() {
     enabled: validId,
   })
   const hasSeats = Boolean(seats.data?.totalElements)
+  const instantMode = Boolean(
+    requestedInstant && hasSeats && space.data && facilityFor(space.data)?.id === 'reading',
+  )
+  const rules = useQuery({
+    queryKey: ['booking-rules', id],
+    queryFn: ({ signal }) => spacesApi.bookingRules(id, signal),
+    enabled: validId,
+  })
+  const step = rules.data?.enabled ? rules.data.slotMinutes : 30
+  const times = Array.from(
+    { length: 1440 / step + 1 },
+    (_, i) =>
+      `${String(Math.floor((i * step) / 60)).padStart(2, '0')}:${String((i * step) % 60).padStart(2, '0')}`,
+  )
   const availability = useQuery({
     queryKey: ['availability', id, date, seatId],
-    enabled: Boolean(seats.data && (!hasSeats || seatId)),
+    enabled: Boolean(!instantMode && seats.data && (!hasSeats || seatId)),
     staleTime: 15_000,
     queryFn: ({ signal }) =>
       spacesApi.availability(
@@ -90,8 +104,12 @@ export default function SpaceDetailPage() {
         }}
       />
     )
+  const ruleError = bookingRuleMessage(rules.data, start, end)
   const free = Boolean(
-    availability.data && covers(availability.data.available, start, end) && Date.parse(start) > now,
+    !ruleError &&
+    availability.data &&
+    covers(availability.data.available, start, end) &&
+    Date.parse(start) > now,
   )
   const readingMap = hasSeats && facilityFor(space.data)?.id === 'reading'
   return (
@@ -122,126 +140,174 @@ export default function SpaceDetailPage() {
         <span>{label(space.data.type)}</span>
         {space.data.facilities && <span>{space.data.facilities}</span>}
       </div>
-      <div className={`booking-layout ${readingMap ? 'reading-layout' : ''}`}>
-        <div className={readingMap ? 'booking-sections' : 'stack gap-6 booking-sections'}>
-          <div className="panel schedule-grid">
-            <MonthCalendar value={date} onChange={(d) => selection({ date: d })} />
-            <section className="time-section">
-              <h3 className="flex items-center gap-2">
-                <Clock3 size={18} />
-                시간 선택
-              </h3>
-              <p className="small muted mt-2 mb-5">{formatDate(date)}</p>
-              <div className="grid grid-cols-2 gap-3">
-                <label>
-                  시작
-                  <select value={startTime} onChange={(e) => selection({ start: e.target.value })}>
-                    {times.slice(0, -1).map((t) => (
-                      <option key={t}>{t}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  종료
-                  <select value={endTime} onChange={(e) => selection({ end: e.target.value })}>
-                    {times.slice(1).map((t) => (
-                      <option key={t}>{t}</option>
-                    ))}
-                  </select>
-                </label>
+      {readingMap && (
+        <div className="tabs" aria-label="좌석 이용 방식">
+          <button
+            className={!instantMode ? 'active' : ''}
+            aria-pressed={!instantMode}
+            onClick={() => selection({ mode: 'scheduled' })}
+          >
+            날짜·시간 예약
+          </button>
+          <button
+            className={instantMode ? 'active' : ''}
+            aria-pressed={instantMode}
+            onClick={() => selection({ mode: 'instant' })}
+          >
+            지금 바로 이용
+          </button>
+        </div>
+      )}
+      {readingMap && instantMode ? (
+        <InstantSeatUse spaceId={id} />
+      ) : (
+        <div className={`booking-layout ${readingMap ? 'reading-layout' : ''}`}>
+          <div className={readingMap ? 'booking-sections' : 'stack gap-6 booking-sections'}>
+            <div className="panel schedule-grid">
+              <MonthCalendar
+                value={date}
+                onChange={(d) => selection({ date: d })}
+                maximum={rules.data?.enabled ? addDays(today(), rules.data.advanceDays) : undefined}
+              />
+              <section className="time-section">
+                <h3 className="flex items-center gap-2">
+                  <Clock3 size={18} />
+                  시간 선택
+                </h3>
+                <p className="small muted mt-2 mb-5">{formatDate(date)}</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <label>
+                    시작
+                    <select
+                      value={startTime}
+                      onChange={(e) => selection({ start: e.target.value })}
+                    >
+                      {[...new Set([...times.slice(0, -1), startTime])].sort().map((t) => (
+                        <option key={t}>{t}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    종료
+                    <select value={endTime} onChange={(e) => selection({ end: e.target.value })}>
+                      {[...new Set([...times.slice(1), endTime])].sort().map((t) => (
+                        <option key={t}>{t}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <p className="small muted my-4">{step}분 단위로 시간을 선택할 수 있습니다.</p>
+                {rules.isError && (
+                  <ErrorNotice error={rules.error} retry={() => void rules.refetch()} />
+                )}
+                {rules.data?.enabled && (
+                  <p className="notice mb-4">
+                    오늘부터 {rules.data.advanceDays}일 · 1회 {rules.data.minDurationMinutes}~
+                    {rules.data.maxDurationMinutes}분
+                    {rules.data.dailyMaxMinutes
+                      ? ` · 하루 ${rules.data.dailyMaxMinutes}분 (${rules.data.usageScope === 'VENUE' ? '동일 시설 합산' : '이 공간'})`
+                      : ''}
+                    {rules.data.preventAdjacent ? ' · 연속 예약 제한' : ''}
+                  </p>
+                )}
+                {ruleError && (
+                  <p role="alert" className="notice error mb-4">
+                    {ruleError}
+                  </p>
+                )}
+                {policy.isPending ? (
+                  <Loading message="운영시간 확인 중" />
+                ) : policy.isError ? (
+                  <ErrorNotice error={policy.error} retry={() => void policy.refetch()} />
+                ) : (
+                  <PolicyNotice policy={policy.data} date={date} />
+                )}
+              </section>
+            </div>
+            {!readingMap && <FloorPlan space={space.data} />}
+            {hasSeats && (
+              <SeatPicker
+                spaceId={id}
+                imageMap={readingMap}
+                bookingEnabled={space.data.bookingEnabled}
+                start={start}
+                end={end}
+                selectedId={seatId}
+                onSelect={(s) => selection({ seat: String(s.id), seatLabel: s.seatNumber })}
+              />
+            )}
+            <section className="panel daily-availability">
+              <div className="section-heading">
+                <h2>시간별 이용 가능 여부</h2>
+                <button
+                  className="text-link"
+                  disabled={availability.isFetching || (hasSeats && !seatId)}
+                  onClick={() => void availability.refetch()}
+                >
+                  새로고침
+                </button>
               </div>
-              <p className="small muted my-4">30분 단위로 시간을 선택할 수 있습니다.</p>
-              {policy.isPending ? (
-                <Loading message="운영시간 확인 중" />
-              ) : policy.isError ? (
-                <ErrorNotice error={policy.error} retry={() => void policy.refetch()} />
+              {hasSeats && !seatId ? (
+                <p className="notice">좌석을 선택하면 하루 시간표를 확인할 수 있습니다.</p>
+              ) : availability.isPending ? (
+                <Loading />
+              ) : availability.isError ? (
+                <ErrorNotice error={availability.error} retry={() => void availability.refetch()} />
               ) : (
-                <PolicyNotice policy={policy.data} date={date} />
+                <>
+                  <div className="legend">
+                    <span>
+                      <i className="free" />
+                      예약 가능
+                    </span>
+                    <span>
+                      <i className="unavailable" />
+                      예약·차단·운영시간 외
+                    </span>
+                  </div>
+                  <div className="time-grid">
+                    {times.slice(0, -1).map((t, i) => {
+                      const a = toInstant(date, t),
+                        b = toInstant(date, times[i + 1])
+                      const possible =
+                        Date.parse(a) > now && covers(availability.data.available, a, b)
+                      const chosen = start <= a && b <= end
+                      return (
+                        <button
+                          key={t}
+                          disabled={!possible}
+                          aria-pressed={chosen}
+                          aria-label={`${t}부터 ${step}분 ${possible ? '예약 가능' : '예약 불가'}`}
+                          className={chosen && possible ? 'selected' : ''}
+                          onClick={() => selection({ start: t, end: times[i + 1] })}
+                        >
+                          {t}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className={`notice mt-4 ${free ? 'success' : ''}`} role="status">
+                    {free
+                      ? '선택한 시간 전체를 예약할 수 있습니다.'
+                      : '선택한 시간은 예약할 수 없습니다. 시간 또는 좌석을 변경해주세요.'}
+                  </p>
+                </>
               )}
             </section>
           </div>
-          {!readingMap && <FloorPlan space={space.data} />}
-          {hasSeats && (
-            <SeatPicker
-              spaceId={id}
-              imageMap={readingMap}
-              bookingEnabled={space.data.bookingEnabled}
-              start={start}
-              end={end}
-              selectedId={seatId}
-              onSelect={(s) => selection({ seat: String(s.id), seatLabel: s.seatNumber })}
-            />
-          )}
-          <section className="panel daily-availability">
-            <div className="section-heading">
-              <h2>시간별 이용 가능 여부</h2>
-              <button
-                className="text-link"
-                disabled={availability.isFetching || (hasSeats && !seatId)}
-                onClick={() => void availability.refetch()}
-              >
-                새로고침
-              </button>
-            </div>
-            {hasSeats && !seatId ? (
-              <p className="notice">좌석을 선택하면 하루 시간표를 확인할 수 있습니다.</p>
-            ) : availability.isPending ? (
-              <Loading />
-            ) : availability.isError ? (
-              <ErrorNotice error={availability.error} retry={() => void availability.refetch()} />
-            ) : (
-              <>
-                <div className="legend">
-                  <span>
-                    <i className="free" />
-                    예약 가능
-                  </span>
-                  <span>
-                    <i className="unavailable" />
-                    예약·차단·운영시간 외
-                  </span>
-                </div>
-                <div className="time-grid">
-                  {times.slice(0, -1).map((t, i) => {
-                    const a = toInstant(date, t),
-                      b = toInstant(date, times[i + 1])
-                    const possible =
-                      Date.parse(a) > now && covers(availability.data.available, a, b)
-                    const chosen = start <= a && b <= end
-                    return (
-                      <button
-                        key={t}
-                        disabled={!possible}
-                        aria-pressed={chosen}
-                        aria-label={`${t}부터 30분 ${possible ? '예약 가능' : '예약 불가'}`}
-                        className={chosen && possible ? 'selected' : ''}
-                        onClick={() => selection({ start: t, end: times[i + 1] })}
-                      >
-                        {t}
-                      </button>
-                    )
-                  })}
-                </div>
-                <p className={`notice mt-4 ${free ? 'success' : ''}`} role="status">
-                  {free
-                    ? '선택한 시간 전체를 예약할 수 있습니다.'
-                    : '선택한 시간은 예약할 수 없습니다. 시간 또는 좌석을 변경해주세요.'}
-                </p>
-              </>
-            )}
-          </section>
+          <BookingForm
+            space={space.data}
+            hasSeats={hasSeats}
+            seatId={seatId}
+            seatLabel={params.get('seatLabel') ?? undefined}
+            start={start}
+            end={end}
+            available={free && !policy.isError && !rules.isError}
+            checking={availability.isFetching || policy.isPending || rules.isPending}
+            purposeRequired={Boolean(rules.data?.enabled && rules.data.purposeRequired)}
+          />
         </div>
-        <BookingForm
-          space={space.data}
-          hasSeats={hasSeats}
-          seatId={seatId}
-          seatLabel={params.get('seatLabel') ?? undefined}
-          start={start}
-          end={end}
-          available={free && !policy.isError}
-          checking={availability.isFetching || policy.isPending}
-        />
-      </div>
+      )}
     </>
   )
 }

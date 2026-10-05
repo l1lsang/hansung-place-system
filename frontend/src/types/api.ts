@@ -58,6 +58,60 @@ export interface Reservation extends ReservationInput {
   status: 'UPCOMING' | 'COMPLETED' | 'CANCELLED'
   createdAt: string
   cancelledAt: string | null
+  endedAt?: string | null
+  owner?: { name: string; studentId: string; email: string }
+  actions?: {
+    id: number
+    actorId: number
+    action: 'CANCEL' | 'RETURN_SEAT' | 'ADMIN_CANCEL' | 'ADMIN_END'
+    reason: string | null
+    createdAt: string
+  }[]
+}
+
+export interface SeatAvailabilityItem extends Seat {
+  available: boolean
+  availableUntil: string | null
+  occupiedUntil: string | null
+  mine: boolean
+  reservationId: number | null
+}
+export interface SeatAvailability extends TimeRange {
+  spaceId: number
+  bookingEnabled: boolean
+  policyConfigured: boolean
+  instant: boolean
+  instantUseMinutes: number
+  userHasSeatUse: boolean
+  seats: Page<SeatAvailabilityItem>
+}
+export interface BookingRulesInput {
+  enabled: boolean
+  slotMinutes: number
+  minDurationMinutes: number
+  maxDurationMinutes: number
+  advanceDays: number
+  dailyMaxMinutes: number | null
+  usageScope: 'SPACE' | 'VENUE'
+  preventAdjacent: boolean
+  purposeRequired: boolean
+  instantUseMinutes: number
+}
+export interface BookingRules extends BookingRulesInput {
+  spaceId: number
+  configured: boolean
+  updatedBy: number | null
+  updatedAt: string | null
+}
+export interface AdminSummary {
+  date: string
+  timeZone: string
+  observedAt: string
+  managedSpaces: number
+  disabledSpaces: number
+  reservationCount: number
+  activeCount: number
+  reservedMinutes: number
 }
 export interface SpaceInput {
   spaceCode: string

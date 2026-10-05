@@ -55,12 +55,14 @@ export function covers(ranges: TimeRange[], start: string, end: string) {
   }
   return false
 }
-export function reservationState(r: Reservation) {
+export function reservationState(r: Reservation, now = Date.now()) {
   return r.status === 'CANCELLED'
     ? '취소'
-    : r.status === 'COMPLETED' || Date.parse(r.endTime) <= Date.now()
+    : r.status === 'COMPLETED' || Date.parse(r.endedAt ?? r.endTime) <= now
       ? '종료'
-      : '예정'
+      : Date.parse(r.startTime) <= now
+        ? '이용 중'
+        : '예정'
 }
 export function defaultSelection() {
   const now = new Date(Date.now() + 60 * 60_000)

@@ -42,6 +42,6 @@ public class ReservationPolicy {
             }
         }
         // Operating hours/exam dates are checked by OperatingPolicyService under the space lock.
-        // Booking horizon and per-user duration limits have not been specified.
+        // Optional duration/horizon/daily rules are checked by BookingRulesService.
     }
 }

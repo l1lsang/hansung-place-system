@@ -10,7 +10,7 @@ const periods: { value: Period; label: string }[] = [
   { value: 'EXAM', label: '시험기간' },
 ]
 const days = ['월요일', '화요일', '수요일', '목요일', '금요일', '토요일', '일요일']
-export function PolicyEditor({ policy }: { policy: OperatingPolicy }) {
+export function PolicyEditor({ policy, facility }: { policy: OperatingPolicy; facility?: string }) {
   const [form, setForm] = useState<PolicyInput>(() => ({
     enabled: policy.enabled,
     academicPeriod: policy.academicPeriod ?? 'SEMESTER',
@@ -43,6 +43,45 @@ export function PolicyEditor({ policy }: { policy: OperatingPolicy }) {
       ...current,
       hours: current.hours.map((h, i) => (i === index ? { ...h, ...update } : h)),
     }))
+  }
+  function loadReferenceHours() {
+    change({
+      hours: periods.flatMap(({ value: period }) =>
+        weekdays.map((dayOfWeek, day) => {
+          let closed = false,
+            openTime = '09:00',
+            closeTime = facility === 'park' ? '17:00' : '20:00'
+          if (facility === 'reading') {
+            openTime = period === 'EXAM' ? '00:00' : '06:30'
+            closeTime = period === 'EXAM' ? '24:00' : '23:00'
+          }
+          if (facility === 'library') {
+            closed = day === 6 || (period === 'VACATION' && day === 5)
+            openTime =
+              period === 'VACATION'
+                ? '10:00'
+                : day === 5 && period === 'SEMESTER'
+                  ? '11:00'
+                  : '09:00'
+            closeTime =
+              period === 'VACATION'
+                ? '16:00'
+                : day === 5
+                  ? period === 'EXAM'
+                    ? '17:00'
+                    : '15:00'
+                  : '21:00'
+          }
+          return {
+            period,
+            dayOfWeek,
+            closed,
+            openTime: closed ? null : openTime,
+            closeTime: closed ? null : closeTime,
+          }
+        }),
+      ),
+    })
   }
   function submit(event: FormEvent) {
     event.preventDefault()
@@ -95,6 +134,17 @@ export function PolicyEditor({ policy }: { policy: OperatingPolicy }) {
         </p>
       )}
       <fieldset disabled={action.pending} className="stack">
+        {facility && (
+          <>
+            <button type="button" className="btn secondary self-start" onClick={loadReferenceHours}>
+              참고 프로젝트 운영시간 불러오기
+            </button>
+            <p className="small muted">
+              시간표만 채웁니다. 현재 학교 운영 기준을 확인하고 정책 적용·시험기간 날짜를 설정한 뒤
+              저장해주세요. 학술정보관 시험기간 예시는 학기 중 기준입니다.
+            </p>
+          </>
+        )}
         <label className="check-label">
           <input
             type="checkbox"

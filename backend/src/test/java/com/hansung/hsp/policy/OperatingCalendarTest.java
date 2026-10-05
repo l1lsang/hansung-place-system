@@ -46,6 +46,14 @@ class OperatingCalendarTest {
     @Test void rejectsLongSpansWithClosedInteriorDays() {
         assertThat(OperatingCalendar.allows(policy(), range("2030-01-01T09:00:00", "2035-01-01T18:00:00"))).isFalse();
     }
+    @Test void immediateUseStopsAtClosingButContinuesAcrossAdjacentExamDays() {
+        var regular = range("2030-05-27T17:30:00", "2030-05-27T20:30:00");
+        assertThat(com.hansung.hsp.space.SeatAvailabilityService.continuousEnd(regular.startTime(), OperatingCalendar.openWindows(policy(), regular)))
+                .isEqualTo(range("2030-05-27T17:30:00", "2030-05-27T18:00:00").endTime());
+        var exam = range("2030-06-01T22:30:00", "2030-06-02T01:30:00");
+        assertThat(com.hansung.hsp.space.SeatAvailabilityService.continuousEnd(exam.startTime(), OperatingCalendar.openWindows(policy(), exam)))
+                .isEqualTo(exam.endTime());
+    }
     @Test void rejectsDuplicateDaysAndReversedExamDates() {
         var p = policy().response();
         var duplicate = new ArrayList<>(p.hours()); duplicate.set(1, duplicate.getFirst());

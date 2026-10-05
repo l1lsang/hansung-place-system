@@ -42,10 +42,16 @@ public class ReservationController {
 
     @DeleteMapping("/{reservationId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    @Operation(summary = "본인 예약 취소", description = "행과 참여자는 보존하고 CANCELLED 상태로 변경합니다.")
+    @Operation(summary = "본인 예약 취소", description = "행과 참여자는 보존합니다. 진행 중인 좌석은 반납(COMPLETED), 나머지 예약은 CANCELLED로 처리합니다.")
     public void cancel(@AuthenticationPrincipal HspPrincipal principal,
             @PathVariable @Positive Long reservationId) {
         service.cancel(principal.getUserId(), reservationId);
     }
-}
 
+    @PostMapping("/{reservationId}/return")
+    @Operation(summary = "본인 좌석 반납", description = "실제 종료 시각을 기록하고 남은 시간을 해제합니다. 원래 예약 시간과 이력을 보존합니다.")
+    public ReservationResponse returnSeat(@AuthenticationPrincipal HspPrincipal principal,
+            @PathVariable @Positive Long reservationId) {
+        return service.returnSeat(principal.getUserId(), reservationId);
+    }
+}

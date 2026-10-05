@@ -28,6 +28,8 @@ public class Reservation {
     private Instant createdAt;
     @Column(name = "cancelled_at")
     private Instant cancelledAt;
+    @Column(name = "ended_at")
+    private Instant endedAt;
 
     protected Reservation() {}
     public Reservation(Long userId, Long spaceId, Long seatId, Instant startTime, Instant endTime,
@@ -46,6 +48,12 @@ public class Reservation {
         status = ReservationStatus.CANCELLED;
         cancelledAt = now;
     }
+    public void endSeatUse(Instant now) {
+        status = ReservationStatus.COMPLETED;
+        endedAt = now;
+    }
+    public Instant effectiveEnd() { return endedAt == null ? endTime : endedAt; }
+    public Instant getEndedAt() { return endedAt; }
     public Long getId() { return id; }
     public Long getUserId() { return userId; }
     public Long getSpaceId() { return spaceId; }
@@ -58,4 +66,3 @@ public class Reservation {
     public Instant getCreatedAt() { return createdAt; }
     public Instant getCancelledAt() { return cancelledAt; }
 }
-

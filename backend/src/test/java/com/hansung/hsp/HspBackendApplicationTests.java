@@ -69,6 +69,8 @@ class HspBackendApplicationTests {
     @Autowired PasswordEncoder encoder;
     @Autowired ReservationService reservationService;
     @Autowired SpaceBlockService blockService;
+    @Autowired BookingRulesService bookingRules;
+    @Autowired ReservationActionRepository reservationActions;
     @Autowired org.springframework.security.web.FilterChainProxy securityFilters;
     @Autowired org.springframework.security.web.csrf.CsrfTokenRepository csrfRepository;
 
@@ -118,9 +120,233 @@ class HspBackendApplicationTests {
 
     @Test void flywayAndHibernateValidateRealPostgresSchema() {
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success", Integer.class))
-                .isEqualTo(3);
+                .isEqualTo(4);
         assertThat(jdbc.queryForObject("select type from flyway_schema_history where version='1'", String.class))
                 .isEqualTo("SQL");
+    }
+
+    @Test void batchSeatAvailabilityPreservesPrivacyAndUsesRealSeatIds() throws Exception {
+        var space = room(true); var owner = user("STUDENT"); var other = user("STUDENT");
+        var first = seats.saveAndFlush(new Seat(space.getId(), "001", "AVAILABLE"));
+        var second = seats.saveAndFlush(new Seat(space.getId(), "162", "AVAILABLE"));
+        var start = future(); var end = start.plusSeconds(3600);
+        var reservation = reservationService.create(owner.getId(), seatBooking(space, first, start, end));
+        var path = "/api/spaces/" + space.getId() + "/seats/availability";
+        mvc.perform(get(path).param("startTime", start.toString()).param("endTime", end.toString()))
+                .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.seats.totalElements").value(2))
+                .andExpect(jsonPath("$.seats.content[0].available").value(false))
+                .andExpect(jsonPath("$.seats.content[0].mine").value(false))
+                .andExpect(jsonPath("$.seats.content[0].reservationId").isEmpty())
+                .andExpect(jsonPath("$.seats.content[0].owner").doesNotExist())
+                .andExpect(jsonPath("$.seats.content[1].id").value(second.getId()))
+                .andExpect(jsonPath("$.seats.content[1].available").value(true));
+        mvc.perform(as(get(path).param("startTime", start.toString()).param("endTime", end.toString()), owner))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.seats.content[0].mine").value(true))
+                .andExpect(jsonPath("$.seats.content[0].reservationId").value(reservation.id()));
+        mvc.perform(as(get(path).param("startTime", start.toString()).param("endTime", end.toString()), other))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.seats.content[0].reservationId").isEmpty());
+        mvc.perform(get(path).param("startTime", start.toString()).param("endTime", start.plus(32, ChronoUnit.DAYS).toString()))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test void instantUseClipsAtNextBookingThenReturnPreservesOriginalEndAndAudit() throws Exception {
+        var space = room(true); var owner = user("STUDENT"); var nextOwner = user("STUDENT");
+        var seat = seats.saveAndFlush(new Seat(space.getId(), "008", "AVAILABLE"));
+        var nextStart = Instant.now().truncatedTo(ChronoUnit.MICROS).plusSeconds(1800);
+        reservationService.create(nextOwner.getId(), seatBooking(space, seat, nextStart, nextStart.plusSeconds(3600)));
+        mvc.perform(get("/api/spaces/" + space.getId() + "/seat-status"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.instant").value(true))
+                .andExpect(jsonPath("$.seats.content[0].available").value(true));
+        var result = mvc.perform(as(post("/api/spaces/" + space.getId() + "/seats/" + seat.getId() + "/use"), owner)
+                        .with(csrf().asHeader())).andExpect(status().isCreated()).andReturn();
+        long reservationId = id(result);
+        var saved = reservations.findById(reservationId).orElseThrow();
+        assertThat(saved.getStartTime()).isBefore(Instant.now());
+        assertThat(saved.getEndTime()).isEqualTo(nextStart.truncatedTo(ChronoUnit.MICROS));
+        mvc.perform(as(post("/api/reservations/" + reservationId + "/return"), owner))
+                .andExpect(status().isForbidden());
+        mvc.perform(as(post("/api/reservations/" + reservationId + "/return"), nextOwner).with(csrf().asHeader()))
+                .andExpect(status().isForbidden());
+        mvc.perform(as(post("/api/reservations/" + reservationId + "/return"), owner).with(csrf().asHeader()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.endedAt").isNotEmpty()).andExpect(jsonPath("$.actions[0].action").value("RETURN_SEAT"));
+        mvc.perform(as(post("/api/reservations/" + reservationId + "/return"), owner).with(csrf().asHeader()))
+                .andExpect(status().isOk());
+        var returned = reservations.findById(reservationId).orElseThrow();
+        assertThat(returned.getEndTime()).isEqualTo(saved.getEndTime());
+        assertThat(returned.getEndedAt()).isBefore(returned.getEndTime());
+        assertThat(reservationActions.findByReservationIdOrderById(reservationId)).hasSize(1);
+        mvc.perform(get("/api/spaces/" + space.getId() + "/seat-status"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.seats.content[0].available").value(true));
+    }
+
+    @Test void instantUseRejectsBlockedAndDisabledSeatsAndSameOwnerAcrossRooms() throws Exception {
+        var space = room(true); var otherRoom = room(true); var owner = user("STUDENT");
+        var first = seats.saveAndFlush(new Seat(space.getId(), "001", "AVAILABLE"));
+        var second = seats.saveAndFlush(new Seat(otherRoom.getId(), "002", "AVAILABLE"));
+        var disabled = seats.saveAndFlush(new Seat(space.getId(), "003", "DISABLED"));
+        assertThatThrownBy(() -> reservationService.startSeatUse(owner.getId(), space.getId(), disabled.getId()))
+                .isInstanceOf(ApiException.class).hasMessageContaining("사용할 수 없는");
+        reservationService.startSeatUse(owner.getId(), space.getId(), first.getId());
+        mvc.perform(as(post("/api/spaces/" + otherRoom.getId() + "/seats/" + second.getId() + "/use"), owner)
+                        .with(csrf().asHeader())).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ALREADY_USING_SEAT"));
+        var admin = manager(otherRoom);
+        blocks.saveAndFlush(new SpaceBlock(otherRoom.getId(), admin.getId(), Instant.now().minusSeconds(60),
+                Instant.now().plusSeconds(3600), "점검", Instant.now()));
+        assertThatThrownBy(() -> reservationService.startSeatUse(user("STUDENT").getId(), otherRoom.getId(), second.getId()))
+                .isInstanceOf(ApiException.class).hasMessageContaining("현재 이용할 수 없는");
+    }
+
+    @Test void concurrentInstantUsesAcrossSpacesAllowOnlyOneSeatForTheSameUser() throws Exception {
+        var one = room(true); var two = room(true); var owner = user("STUDENT");
+        var a = seats.saveAndFlush(new Seat(one.getId(), "A", "AVAILABLE"));
+        var b = seats.saveAndFlush(new Seat(two.getId(), "B", "AVAILABLE"));
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var ready = new CountDownLatch(2); var go = new CountDownLatch(1);
+            var tasks = List.of(a, b).stream().map(seat -> pool.submit(() -> {
+                ready.countDown(); go.await();
+                try { reservationService.startSeatUse(owner.getId(), seat.getSpaceId(), seat.getId()); return true; }
+                catch (ApiException ex) { return false; }
+            })).toList();
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue(); go.countDown();
+            int created = 0;
+            for (var task : tasks) if (task.get(15, TimeUnit.SECONDS)) created++;
+            assertThat(created).isEqualTo(1);
+        }
+    }
+
+    @Test void instantUseHonorsClosedHoursAndExamOverride() throws Exception {
+        var space = room(true); var admin = manager(space); var owner = user("STUDENT");
+        var seat = seats.saveAndFlush(new Seat(space.getId(), "E", "AVAILABLE"));
+        var hours = Arrays.stream(OperatingPeriod.values()).flatMap(period -> Arrays.stream(java.time.DayOfWeek.values())
+                .map(day -> new OperatingHoursInput(period, day, period != OperatingPeriod.EXAM,
+                        period == OperatingPeriod.EXAM ? "00:00" : null, period == OperatingPeriod.EXAM ? "24:00" : null))).toList();
+        savePolicy(admin, space, new OperatingPolicyInput(true, OperatingPeriod.SEMESTER, null, null, hours)).andExpect(status().isOk());
+        mvc.perform(as(post("/api/spaces/" + space.getId() + "/seats/" + seat.getId() + "/use"), owner).with(csrf().asHeader()))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("SEAT_NOT_AVAILABLE_NOW"));
+        var today = Instant.now().atZone(OperatingCalendar.ZONE).toLocalDate();
+        savePolicy(admin, space, new OperatingPolicyInput(true, OperatingPeriod.SEMESTER, today, today.plusDays(1), hours)).andExpect(status().isOk());
+        mvc.perform(get("/api/spaces/" + space.getId() + "/seat-status")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.seats.content[0].available").value(true));
+        var result = reservationService.startSeatUse(owner.getId(), space.getId(), seat.getId());
+        assertThat(java.time.Duration.between(result.startTime(), result.endTime())).isEqualTo(java.time.Duration.ofHours(3));
+    }
+
+    @Test void adminCancellationRequiresScopeReasonAndPreservesBookingAndParticipants() throws Exception {
+        var space = room(true); var owner = user("STUDENT"); var admin = manager(space); var outsider = user("ADMIN");
+        var start = future();
+        var reservation = reservationService.create(owner.getId(), new ReservationCreateRequest(space.getId(), null,
+                start, start.plusSeconds(3600), "회의", ReservationKind.BOOKING,
+                List.of(new ReservationMemberRequest(unique(), "참여자"))));
+        var path = "/api/admin/reservations/" + reservation.id() + "/cancel";
+        mvc.perform(as(post(path), owner).with(csrf().asHeader()).contentType("application/json").content("{\"reason\":\"점검\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(as(post(path), outsider).with(csrf().asHeader()).contentType("application/json").content("{\"reason\":\"점검\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(as(post(path), admin).with(csrf().asHeader()).contentType("application/json").content("{\"reason\":\" \"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(as(post(path), admin).with(csrf().asHeader()).contentType("application/json").content("{\"reason\":\"시설 점검\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CANCELLED"))
+                .andExpect(jsonPath("$.owner.studentId").value(owner.getStudentId()))
+                .andExpect(jsonPath("$.actions[0].reason").value("시설 점검"))
+                .andExpect(jsonPath("$.actions[0].actorId").value(admin.getId()));
+        assertThat(members.findByReservationIdOrderById(reservation.id())).hasSize(1);
+        assertThat(reservations.existsById(reservation.id())).isTrue();
+        mvc.perform(as(post(path), admin).with(csrf().asHeader()).contentType("application/json").content("{\"reason\":\"재시도\"}"))
+                .andExpect(status().isOk());
+        assertThat(reservationActions.findByReservationIdOrderById(reservation.id())).hasSize(1);
+    }
+
+    @Test void adminEndsActiveSeatUseWithoutErasingOriginalTimes() throws Exception {
+        var space = room(true); var admin = manager(space); var owner = user("STUDENT");
+        var seat = seats.saveAndFlush(new Seat(space.getId(), "A", "AVAILABLE"));
+        var reservation = reservationService.startSeatUse(owner.getId(), space.getId(), seat.getId());
+        mvc.perform(as(post("/api/admin/reservations/" + reservation.id() + "/cancel"), admin).with(csrf().asHeader())
+                        .contentType("application/json").content("{\"reason\":\"운영 종료\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.actions[0].action").value("ADMIN_END"));
+        assertThat(reservations.findById(reservation.id()).orElseThrow().getEndTime())
+                .isCloseTo(reservation.endTime(), within(1, ChronoUnit.MICROS));
+    }
+
+    private BookingRulesInput libraryRules(boolean enabled) {
+        return new BookingRulesInput(enabled, 30, 30, 180, 7, 180,
+                BookingRulesInput.UsageScope.VENUE, true, true, 180);
+    }
+
+    @Test void bookingRulesAreOptInScopedAndEnforceDurationHorizonAndPurpose() throws Exception {
+        var space = room(true); var admin = manager(space); var owner = user("STUDENT");
+        mvc.perform(get("/api/spaces/" + space.getId() + "/booking-rules"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.configured").value(false))
+                .andExpect(jsonPath("$.enabled").value(false));
+        var path = "/api/admin/spaces/" + space.getId() + "/booking-rules";
+        mvc.perform(as(put(path), user("ADMIN")).with(csrf().asHeader()).contentType("application/json")
+                        .content(json.writeValueAsString(libraryRules(true)))).andExpect(status().isForbidden());
+        mvc.perform(as(put(path), admin).with(csrf().asHeader()).contentType("application/json")
+                        .content(json.writeValueAsString(libraryRules(true)))).andExpect(status().isOk());
+        var start = future().truncatedTo(ChronoUnit.DAYS);
+        create(owner, booking(space, start, start.plusSeconds(4 * 3600))).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("BOOKING_DURATION_LIMIT"));
+        create(owner, booking(space, start.plusSeconds(1), start.plusSeconds(3601))).andExpect(status().isBadRequest());
+        create(owner, booking(space, start.plus(10, ChronoUnit.DAYS), start.plus(10, ChronoUnit.DAYS).plusSeconds(3600)))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("BOOKING_ADVANCE_LIMIT"));
+        create(owner, new ReservationCreateRequest(space.getId(), null, start, start.plusSeconds(3600), " ",
+                ReservationKind.BOOKING, List.of())).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("PURPOSE_REQUIRED"));
+        bookingRules.replace(admin.getId(), space.getId(), libraryRules(false));
+        create(owner, booking(space, start.plus(10, ChronoUnit.DAYS), start.plus(10, ChronoUnit.DAYS).plusSeconds(4 * 3600)))
+                .andExpect(status().isCreated());
+    }
+
+    @Test void sharedVenueDailyLimitAndAdjacentRuleApplyAcrossRoomsAndCancellationRestoresQuota() throws Exception {
+        var a = room(true); var b = room(true); var owner = user("STUDENT");
+        bookingRules.replace(manager(a).getId(), a.getId(), libraryRules(true));
+        bookingRules.replace(manager(b).getId(), b.getId(), libraryRules(true));
+        var start = future().truncatedTo(ChronoUnit.DAYS);
+        var reservation = reservationService.create(owner.getId(), booking(a, start, start.plusSeconds(3600)));
+        create(owner, booking(b, start.plusSeconds(3600), start.plusSeconds(7200))).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ADJACENT_BOOKING_NOT_ALLOWED"));
+        create(owner, booking(b, start.plusSeconds(7200), start.plusSeconds(18000))).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DAILY_USAGE_LIMIT"));
+        reservationService.cancel(owner.getId(), reservation.id());
+        create(owner, booking(b, start.plusSeconds(7200), start.plusSeconds(18000))).andExpect(status().isCreated());
+    }
+
+    @Test void adminSummaryUsesRealDurationsAndOnlyManagedSpaces() throws Exception {
+        var space = room(true); var admin = manager(space); var owner = user("STUDENT");
+        var start = future().truncatedTo(ChronoUnit.DAYS);
+        reservationService.create(owner.getId(), booking(space, start, start.plusSeconds(5400)));
+        var cancelled = reservationService.create(owner.getId(), booking(space, start.plusSeconds(7200), start.plusSeconds(9000)));
+        reservationService.cancel(owner.getId(), cancelled.id());
+        reservationService.create(owner.getId(), booking(room(true), start, start.plusSeconds(7200)));
+        mvc.perform(as(get("/api/admin/summary").param("date", start.atZone(OperatingCalendar.ZONE).toLocalDate().toString()), admin))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.managedSpaces").value(1))
+                .andExpect(jsonPath("$.reservationCount").value(1)).andExpect(jsonPath("$.reservedMinutes").value(90.0));
+        mvc.perform(as(get("/api/admin/summary"), owner)).andExpect(status().isForbidden());
+    }
+
+    @Test void concurrentBookingsCannotExceedDailyLimitAcrossDifferentRooms() throws Exception {
+        var a = room(true); var b = room(true); var owner = user("STUDENT");
+        bookingRules.replace(manager(a).getId(), a.getId(), libraryRules(true));
+        bookingRules.replace(manager(b).getId(), b.getId(), libraryRules(true));
+        var start = future().truncatedTo(ChronoUnit.DAYS);
+        var inputs = List.of(booking(a, start, start.plusSeconds(7200)),
+                booking(b, start.plusSeconds(10800), start.plusSeconds(18000)));
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var ready = new CountDownLatch(2); var go = new CountDownLatch(1);
+            var tasks = inputs.stream().map(input -> pool.submit(() -> {
+                ready.countDown(); go.await();
+                try { reservationService.create(owner.getId(), input); return "CREATED"; }
+                catch (ApiException ex) { return ex.getMessage(); }
+            })).toList();
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue(); go.countDown();
+            var results = new ArrayList<String>();
+            for (var task : tasks) results.add(task.get(15, TimeUnit.SECONDS));
+            assertThat(results.stream().filter("CREATED"::equals).count()).isEqualTo(1);
+            assertThat(results.stream().anyMatch(value -> value.contains("하루 이용시간 한도"))).isTrue();
+        }
     }
 
     @Test void listsSpacesWithAllFiltersAndPagination() throws Exception {
@@ -237,7 +463,9 @@ class HspBackendApplicationTests {
         var end = start.plusSeconds(3600);
         create(u, seatBooking(space, a, start, end)).andExpect(status().isCreated());
         create(u, seatBooking(space, a, start, end)).andExpect(status().isConflict());
-        create(u, seatBooking(space, b, start, end)).andExpect(status().isCreated());
+        create(u, seatBooking(space, b, start, end)).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ALREADY_USING_SEAT"));
+        create(user("STUDENT"), seatBooking(space, b, start, end)).andExpect(status().isCreated());
         create(u, seatBooking(space, disabled, start, end)).andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("SEAT_DISABLED"));
         create(u, seatBooking(space, foreignSeat, start, end)).andExpect(status().isBadRequest())

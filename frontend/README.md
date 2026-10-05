@@ -45,7 +45,7 @@ Vercel 설정은 [배포 안내](../docs/vercel-deployment.md)를 참고하세�
 
 Firebase Auth/Firestore/Vercel Functions, 거대한 App.tsx의 통합 상태, 하드코딩한 공간·점유·예약 정책은 사용하지 않습니다.
 학교 Google SSO를 구현한 것처럼 표시하지 않고 현재 백엔드의 학번/비밀번호 로그인을 제공합니다.
-API에 없는 승인·거절·타인 예약 강제 취소 버튼도 만들지 않았습니다.
+참고 소스에 없는 승인·거절 흐름은 추가하지 않았습니다. 담당 관리자의 강제 취소·좌석 종료는 사유와 이력을 기록하는 Spring API로 구현했습니다.
 
 ## 3. 디렉터리
 
@@ -95,6 +95,10 @@ DB에 없는 공간이나 좌석을 예약 가능한 것처럼 만들지 않습�
 2. 이미지 위의 예약 가능한 좌석 번호를 클릭합니다. 선택한 좌석은 한성 블루와 체크로 표시됩니다.
 3. `예약 내용 확인` 링크로 요약을 확인하고 로그인 후 예약을 확정합니다.
 
+참고 프로젝트의 즉시 이용은 **지금 바로 이용** 탭에서 제공합니다.
+좌석 클릭 → 확인 → 서버 현재 시각으로 시작하며, **내 예약 상세 → 좌석 반납**으로 남은 시간을 해제합니다.
+기본 180분이고 운영 종료·차단·다음 예약 시각을 넘기지 않습니다.
+
 `ReadingRoomSeatMap.tsx`가 이미지와 버튼을 표시하고, `assets/readingRoomLayout.ts`가
 원본 이미지(2262×998)의 좌석 위치를 관리합니다. 위치는 API의 `seatNumber`와 연결하며
 예약 요청에는 실제 `seat.id`를 사용합니다. ID가 좌석 번호와 같다고 가정하지 않습니다.
@@ -137,10 +141,16 @@ DB에 없는 공간이나 좌석을 예약 가능한 것처럼 만들지 않습�
 | admin 차단   | GET·POST /api/admin/spaces/{id}/blocks, DELETE /api/admin/space-blocks/{id}                                       |
 | admin 정책   | PUT /api/admin/spaces/{id}/policy                                                                                 |
 
+추가 연결: GET `/api/spaces/{id}/seats/availability`, GET `/api/spaces/{id}/seat-status`,
+POST `/api/spaces/{id}/seats/{seatId}/use`, POST `/api/reservations/{id}/return`,
+POST `/api/admin/reservations/{id}/cancel`, GET `/api/admin/summary`,
+GET `/api/spaces/{id}/booking-rules`, PUT `/api/admin/spaces/{id}/booking-rules`.
+[요청·응답 및 동작 기준](../docs/reservation-operations.md)을 참고하세요.
+
 페이지에 fetch를 흩어놓지 않고 api 모듈에서 DTO를 처리합니다.
 TanStack Query가 조회 캐시·중복 제거·오류·재조회를 관리하고, 페이지별 lazy loading을 적용했습니다.
-집중열람실은 좌석 목록의 모든 페이지를 100개씩 읽어 전체 좌석표에 표시합니다.
-좌석 일괄 availability API가 없어 최대 6개 요청씩 병렬 조회합니다. 다른 공간의 일반 좌석 목록은 36개씩 표시합니다.
+좌석 일괄 availability API의 모든 페이지를 100개씩 읽어 표시합니다. 현재 162석은 전체 조회에 2개 요청을 사용합니다.
+즉시 이용 현황은 30초마다 갱신하고 로그인 상태가 바뀌면 본인 점유 정보를 포함한 캐시를 지웁니다.
 날짜·시간 변경 시 이전 요청은 취소합니다. AVAILABLE만 보고 빈 좌석으로 판단하지 않습니다.
 캠퍼스 시간대는 항상 Asia/Seoul입니다. 예약 확인 후 제출 직전 availability와 서버 예약 트랜잭션에서 다시 검사합니다.
 
@@ -173,7 +183,8 @@ label, 실제 button, aria-pressed, focus-visible, skip link, modal dialog의 �
 중복 제출, 좌석 예약 409, 예약 취소, 운영 정책 저장을 확인합니다.
 이미지 좌석 선택은 목록 전체 페이지 조회, 번호와 ID가 다른 좌석, 예약 불가/오류 차단,
 시간 변경 중 클릭 차단, 확대 창 선택, 이미지 클릭→예약 확인→실제 DTO 제출까지 테스트합니다.
-프론트 24개 테스트와 lint/typecheck/build가 통과했습니다. mock은 테스트 파일에서만 사용합니다.
+추가로 즉시 이용 확인·중복 이용 차단·좌석 반납·관리자 사유 입력·예약 규칙 저장을 검증합니다.
+mock은 테스트 파일에서만 사용합니다.
 백엔드 테스트는 별도 PostgreSQL Testcontainers에서 실행합니다.
 
 실제 Docker API에서는 공간 1개/좌석 162개, 상세·availability·미설정 정책·비로그인 관리자 차단을 확인했습니다.
@@ -184,8 +195,8 @@ label, 실제 button, aria-pressed, focus-visible, skip link, modal dialog의 �
 
 ## 11. 아직 제공하지 않는 기능
 
-학교 SSO/회원가입/비밀번호 재설정, 예약 승인·거절, 타인 예약 강제 취소, 관리자 좌석 배치 편집,
-좌석 일괄 점유 조회, 공휴일 자동 연동, 7일 예약 제한·사용자별 하루 누적 제한은 API가 없습니다.
+학교 SSO/회원가입/비밀번호 재설정, 예약 승인·거절, 관리자 좌석 배치 편집, 공휴일 자동 연동은 제공하지 않습니다.
+좌석 일괄 현황, 담당 관리자 강제 취소, 즉시 이용·반납, 기간·단위·하루 합계·연속 예약 제한은 실제 API로 추가했습니다.
 기존 MVP의 하드코딩 정책을 실제 학교 정책으로 가정하지 않았습니다.
 운영시간·학기/방학·시험기간 예외는 이번에 실제 API와 관리 화면으로 추가했습니다.
 

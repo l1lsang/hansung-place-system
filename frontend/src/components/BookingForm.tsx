@@ -20,6 +20,7 @@ export function BookingForm({
   end,
   available,
   checking,
+  purposeRequired = false,
 }: {
   space: Space
   seatId?: number
@@ -29,6 +30,7 @@ export function BookingForm({
   end: string
   available: boolean
   checking: boolean
+  purposeRequired?: boolean
 }) {
   const auth = useAuth()
   const location = useLocation()
@@ -190,9 +192,11 @@ export function BookingForm({
             </fieldset>
           )}
           <label>
-            이용 목적 <span className="muted font-normal">(선택)</span>
+            이용 목적{' '}
+            <span className="muted font-normal">({purposeRequired ? '필수' : '선택'})</span>
             <input
               maxLength={100}
+              required={purposeRequired}
               value={purpose}
               onChange={(e) => setPurpose(e.target.value)}
               placeholder="예: 그룹 과제, 개인 학습"

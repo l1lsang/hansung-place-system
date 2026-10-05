@@ -7,12 +7,14 @@ import { AuthContext, type AuthValue } from '../hooks/authContext'
 import { RouteGuard } from '../components/RouteGuard'
 import { BookingForm } from '../components/BookingForm'
 import { PolicyEditor } from '../components/PolicyEditor'
+import { BookingRulesEditor } from '../components/BookingRulesEditor'
+import { InstantSeatUse } from '../components/InstantSeatUse'
 import ReservationDetailPage from '../pages/ReservationDetailPage'
 import LoginPage from '../pages/LoginPage'
 import { reservationsApi } from '../api/reservations'
 import { spacesApi } from '../api/spaces'
 import { adminApi } from '../api/admin'
-import type { Reservation, Space } from '../types/api'
+import type { Reservation, Space, BookingRules, SeatAvailability } from '../types/api'
 import { ApiError } from '../api/client'
 import type { ReactNode } from 'react'
 
@@ -284,5 +286,199 @@ describe('operating policy editor', () => {
       }),
     )
     expect(save.mock.calls[0][1].hours).toHaveLength(21)
+  })
+})
+
+describe('reference booking and operations features', () => {
+  const batch: SeatAvailability = {
+    spaceId: 2,
+    startTime: start,
+    endTime: end,
+    bookingEnabled: true,
+    policyConfigured: true,
+    instant: true,
+    instantUseMinutes: 180,
+    userHasSeatUse: false,
+    seats: {
+      content: [
+        {
+          id: 8162,
+          spaceId: 2,
+          seatNumber: '162',
+          status: 'AVAILABLE',
+          available: true,
+          availableUntil: end,
+          occupiedUntil: null,
+          mine: false,
+          reservationId: null,
+        },
+      ],
+      page: 0,
+      size: 100,
+      totalPages: 1,
+      totalElements: 1,
+    },
+  }
+  it('starts immediate use only after confirmation and sends no client-controlled times', async () => {
+    vi.spyOn(spacesApi, 'seatAvailability').mockResolvedValue(batch)
+    const startUse = vi
+      .spyOn(reservationsApi, 'startSeatUse')
+      .mockResolvedValue({ ...reservation, seatId: 8162, kind: 'SEAT_USE' })
+    mount(
+      <Routes>
+        <Route path="/" element={<InstantSeatUse spaceId={2} />} />
+        <Route path="/reservations/:id" element={<p>즉시 이용 내역 도착</p>} />
+      </Routes>,
+    )
+    await userEvent.click(await screen.findByRole('button', { name: '162번 좌석, 예약 가능' }))
+    expect(startUse).not.toHaveBeenCalled()
+    await userEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: '지금 이용 시작' }),
+    )
+    expect(await screen.findByText('즉시 이용 내역 도착')).toBeInTheDocument()
+    expect(startUse).toHaveBeenCalledExactlyOnceWith(2, 8162)
+  })
+  it('blocks immediate use when the user already has a seat and links their own reservation', async () => {
+    vi.spyOn(spacesApi, 'seatAvailability').mockResolvedValue({
+      ...batch,
+      userHasSeatUse: true,
+      seats: {
+        ...batch.seats,
+        content: [
+          ...batch.seats.content,
+          {
+            ...batch.seats.content[0],
+            id: 1,
+            seatNumber: '001',
+            available: false,
+            mine: true,
+            reservationId: 10,
+            occupiedUntil: end,
+          },
+        ],
+      },
+    })
+    const startUse = vi.spyOn(reservationsApi, 'startSeatUse')
+    mount(<InstantSeatUse spaceId={2} />)
+    expect(await screen.findByRole('link', { name: /001번 이용 내역/ })).toHaveAttribute(
+      'href',
+      '/reservations/10',
+    )
+    await userEvent.click(screen.getByRole('button', { name: '162번 좌석, 예약 가능' }))
+    expect(
+      within(screen.getByRole('dialog')).getByRole('button', { name: '지금 이용 시작' }),
+    ).toBeDisabled()
+    expect(startUse).not.toHaveBeenCalled()
+  })
+  it('returns an active seat and refreshes its completed record', async () => {
+    const current = {
+      ...reservation,
+      kind: 'SEAT_USE' as const,
+      seatId: 7,
+      startTime: new Date(Date.now() - 60000).toISOString(),
+      endTime: new Date(Date.now() + 3600000).toISOString(),
+    }
+    vi.spyOn(spacesApi, 'get').mockResolvedValue(room)
+    const get = vi.spyOn(reservationsApi, 'get').mockResolvedValue(current)
+    const returnSeat = vi.spyOn(reservationsApi, 'returnSeat').mockImplementation(async () => {
+      const result = { ...current, status: 'COMPLETED' as const, endedAt: new Date().toISOString() }
+      get.mockResolvedValue(result)
+      return result
+    })
+    const cancel = vi.spyOn(reservationsApi, 'cancel')
+    mount(
+      <Routes>
+        <Route path="/reservations/:reservationId" element={<ReservationDetailPage />} />
+      </Routes>,
+      auth,
+      '/reservations/10',
+    )
+    await userEvent.click(await screen.findByRole('button', { name: '좌석 반납' }))
+    await userEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: '반납·종료 확정' }),
+    )
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(returnSeat).toHaveBeenCalledWith(10)
+    expect(cancel).not.toHaveBeenCalled()
+    expect(screen.getByText('종료', { selector: '.badge' })).toBeInTheDocument()
+  })
+  it('requires an administrator reason and displays the saved cancellation audit', async () => {
+    vi.spyOn(spacesApi, 'get').mockResolvedValue(room)
+    const get = vi.spyOn(adminApi, 'reservation').mockResolvedValue({
+      ...reservation,
+      owner: { name: user.name, studentId: user.studentId, email: user.email },
+    })
+    const cancel = vi.spyOn(adminApi, 'cancelReservation').mockImplementation(async () => {
+      const result = {
+        ...reservation,
+        status: 'CANCELLED' as const,
+        actions: [
+          {
+            id: 1,
+            actorId: 8,
+            action: 'ADMIN_CANCEL' as const,
+            reason: '시설 점검',
+            createdAt: start,
+          },
+        ],
+      }
+      get.mockResolvedValue(result)
+      return result
+    })
+    mount(
+      <Routes>
+        <Route
+          path="/admin/reservations/:reservationId"
+          element={<ReservationDetailPage admin />}
+        />
+      </Routes>,
+      { ...auth, user: { ...user, role: 'ADMIN' } },
+      '/admin/reservations/10',
+    )
+    await userEvent.click(await screen.findByRole('button', { name: '예약 강제 취소' }))
+    const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: '취소 확정' })
+    expect(confirm).toBeDisabled()
+    await userEvent.type(screen.getByLabelText('처리 사유'), '시설 점검')
+    await userEvent.click(confirm)
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(cancel).toHaveBeenCalledWith(10, '시설 점검')
+    expect(screen.getByText('사유: 시설 점검')).toBeInTheDocument()
+  })
+  it('loads reference limits as an editable preset and persists only on save', async () => {
+    const rules: BookingRules = {
+      spaceId: 2,
+      configured: false,
+      enabled: false,
+      slotMinutes: 30,
+      minDurationMinutes: 30,
+      maxDurationMinutes: 180,
+      advanceDays: 7,
+      dailyMaxMinutes: null,
+      usageScope: 'SPACE',
+      preventAdjacent: false,
+      purposeRequired: false,
+      instantUseMinutes: 180,
+      updatedBy: null,
+      updatedAt: null,
+    }
+    const save = vi.spyOn(adminApi, 'saveBookingRules').mockResolvedValue(rules)
+    mount(<BookingRulesEditor rules={rules} />)
+    await userEvent.click(
+      screen.getByRole('button', { name: '참고 프로젝트 그룹스터디실 기준 불러오기' }),
+    )
+    expect(save).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: '예약 규칙 저장' }))
+    expect(await screen.findByText('예약 규칙을 저장했습니다.')).toBeInTheDocument()
+    expect(save).toHaveBeenCalledWith(
+      2,
+      expect.objectContaining({
+        enabled: true,
+        dailyMaxMinutes: 180,
+        usageScope: 'VENUE',
+        advanceDays: 7,
+        preventAdjacent: true,
+        purposeRequired: true,
+      }),
+    )
   })
 })
