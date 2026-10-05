@@ -38,6 +38,18 @@ Firebase 중심으로 구성되어 있던 기존 데이터 구조를 관계형 �
 사용자에게는 하나의 통합 예약 시스템을 제공하면서도, 관리 측에서는 기존의 부서별 공간 관리 체계를 유지할 수 있도록 설계했습니다.
 ## 3. 서비스 화면
 
+React 프론트엔드를 `frontend/`에 구현했습니다. [실행·구조·검증 안내](frontend/README.md),
+[Vercel 배포 설정](docs/vercel-deployment.md), [운영시간·시험기간 API](docs/operating-policy.md)를 참고하세요.
+
+```sh
+cd frontend
+npm ci
+npm run dev
+```
+
+기존 `.env`는 유지합니다. 새 환경에서만 `frontend/.env.example`을 `.env`로 복사합니다.
+개발 주소는 http://localhost:5173 입니다.
+
 ## 4. 시스템 아키텍처
 실제 학교 환경에서의 확장성과 기존 시스템과의 연동 가능성을 고려하여
 Spring Boot, PostgreSQL, AWS 기반으로 구성했습니다.
@@ -50,7 +62,7 @@ Spring Boot, PostgreSQL, AWS 기반으로 구성했습니다.
 - **Frontend**: 사용자 및 관리자가 공간 예약 서비스를 이용하는 웹 인터페이스
 - **Backend**: Spring Boot 기반 REST API 서버
 - **Database**: PostgreSQL을 통한 사용자, 공간, 예약 데이터 관리
-- **Cloud**: AWS 기반 서비스 운영 및 배포
+- **Cloud**: 프론트엔드는 Vercel 배포 구성, 백엔드는 외부 HTTPS 서버/Docker 운영
 ## 5. 기술 스택
 
 | 분야 | 기술 | 사용 목적 |
@@ -117,9 +129,10 @@ HSP의 데이터베이스는 사용자, 공간, 좌석, 예약 정보를 중심�
 - **space_blocks**: 관리자 시간 차단
 - **system_settings**: 학기/시험 기간 설정 (현재 데이터와 구체적 예약 규칙 없음)
 
-현재 DB에는 부서 테이블, 관리자-공간 관계, 비밀번호 저장소, 예약 승인 상태가 없습니다.
 V2에서 로컬 인증용 `user_credentials`, 담당 공간용 `admin_space_permissions`,
-차단 해제용 `space_blocks.cancelled_at`만 추가하며 기존 데이터는 보존합니다.
+차단 해제용 `space_blocks.cancelled_at`을 추가했습니다.
+V3는 `space_operating_policies`, `space_operating_hours`로 공간별 운영시간과 시험기간 예외를 관리합니다.
+기존 데이터와 전역 `system_settings`는 보존합니다. 부서 테이블과 예약 승인 상태는 아직 없습니다.
 
 ## 7. API
 
@@ -139,6 +152,8 @@ OpenAPI JSON: **http://localhost:8080/v3/api-docs**
 | GET | `/api/spaces/{spaceId}` | 공간 상세 |
 | GET | `/api/spaces/{spaceId}/availability` | 요청 구간의 비점유 시간 |
 | GET | `/api/spaces/{spaceId}/seats` | 좌석 목록/운영 상태 |
+| GET | `/api/spaces/{spaceId}/policy` | 공간 운영시간·시험기간 정책 |
+| PUT | `/api/admin/spaces/{spaceId}/policy` | 담당 공간 운영 정책 전체 저장 |
 | POST | `/api/reservations` | 예약 생성 |
 | GET | `/api/reservations` | 본인의 예약 목록 |
 | GET | `/api/reservations/{reservationId}` | 본인의 예약 상세 |
@@ -181,8 +196,9 @@ availability는 `startTime`, `endTime`을 필수로 받으며 한 번에 최대 
 좌석이 있는 공간은 `seatId`도 지정합니다.
 좌석의 AVAILABLE은 운영 상태이며 시간별 점유 여부는 availability로 확인합니다.
 
-응답의 `available`은 예약/차단 시간을 뺀 구간 목록이며 `policyScope=OCCUPANCY_ONLY`입니다.
-운영 시간/학사 정책까지 보장하지 않습니다. 조회 후 다른 예약이 들어올 수 있어 POST에서 다시 검증합니다.
+응답의 `available`은 예약/차단 시간을 뺀 구간 목록입니다. 활성화된 운영 정책이 있으면 운영시간·시험기간도 반영하며
+`policyScope=OPERATING_HOURS_AND_OCCUPANCY`입니다. 정책이 없거나 꺼져 있으면 `OCCUPANCY_ONLY`로 이전 동작을 유지합니다.
+조회 후 다른 예약이 들어올 수 있어 POST에서 다시 검증합니다. [정책 상세](docs/operating-policy.md)
 
 ### 예약 생성 예시
 
@@ -270,9 +286,9 @@ docker compose exec postgres psql -U hsp -d hsp -c "SELECT * FROM public.flyway_
 
 #### 이후 변경 추가
 
-1. `backend/src/main/resources/db/migration/V2__설명.sql`처럼 새 버전 파일을 추가한다.
-   예: `V2__add_reservation_note.sql`. `V`는 대문자이며 버전 뒤 밑줄은 두 개다.
-2. 필요한 변경 SQL을 작성하고 별도 테스트 DB에서 검증한다. 적용한 V1/V2 파일은 수정하지 않고 후속 변경을 V3, V4로 추가한다.
+1. `backend/src/main/resources/db/migration/V4__설명.sql`처럼 적용된 최신 버전 다음 파일을 추가한다.
+   현재 V3까지 사용했다. `V`는 대문자이며 버전 뒤 밑줄은 두 개다.
+2. 필요한 변경 SQL을 작성하고 별도 테스트 DB에서 검증한다. 적용한 V1/V2/V3 파일은 수정하지 않고 후속 변경을 V4, V5로 추가한다.
 3. `docker compose up --build -d`로 migration이 포함된 backend 이미지를 재빌드한다.
 4. 시작 로그와 `flyway_schema_history`에서 새 버전의 `SQL`, `success=true`를 확인한다.
 

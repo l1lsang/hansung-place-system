@@ -39,8 +39,12 @@ public class SecurityConfiguration {
     }
 
     @Bean
-    CsrfTokenRepository csrfTokenRepository() {
-        return CookieCsrfTokenRepository.withHttpOnlyFalse();
+    CsrfTokenRepository csrfTokenRepository(
+            @Value("${server.servlet.session.cookie.same-site}") String sameSite,
+            @Value("${server.servlet.session.cookie.secure}") boolean secure) {
+        var repository = CookieCsrfTokenRepository.withHttpOnlyFalse();
+        repository.setCookieCustomizer(cookie -> cookie.sameSite(sameSite).secure(secure));
+        return repository;
     }
 
     @Bean
@@ -54,7 +58,7 @@ public class SecurityConfiguration {
             @Value("${hsp.cors.allowed-origins}") String origins) {
         var cors = new CorsConfiguration();
         cors.setAllowedOrigins(Arrays.stream(origins.split(",")).map(String::trim).toList());
-        cors.setAllowedMethods(List.of("GET", "POST", "PATCH", "DELETE", "OPTIONS"));
+        cors.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         cors.setAllowedHeaders(List.of("Content-Type", "X-XSRF-TOKEN"));
         cors.setAllowCredentials(true);
         cors.setMaxAge(3600L);
@@ -97,4 +101,3 @@ public class SecurityConfiguration {
                 .build();
     }
 }
-

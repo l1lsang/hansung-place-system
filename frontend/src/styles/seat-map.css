@@ -1,0 +1,188 @@
+@layer components {
+  .reading-layout > .booking-sections {
+    display: contents;
+  }
+  .reading-layout .image-seat-picker,
+  .reading-layout .daily-availability {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+  .reading-layout .image-seat-picker {
+    grid-row: 2;
+  }
+  .reading-layout .daily-availability {
+    grid-row: 3;
+  }
+  .reading-layout > .booking-summary {
+    grid-column: 2;
+    grid-row: 1;
+    position: static;
+  }
+  #booking-summary {
+    scroll-margin-block: 24px;
+  }
+  .seat-map-heading,
+  .seat-map-toolbar,
+  .seat-map-selection {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .seat-map-heading {
+    margin-bottom: 16px;
+  }
+  .seat-map-heading .btn {
+    min-height: 44px;
+  }
+  .seat-map-toolbar {
+    margin-bottom: 12px;
+  }
+  .seat-map-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    background: #f0f4f9;
+    border-radius: 8px;
+  }
+  .seat-map-controls button {
+    padding: 8px 14px;
+    min-height: 44px;
+    font-size: 12px;
+    border-radius: 5px;
+    color: var(--color-muted);
+  }
+  .seat-map-controls button[aria-pressed='true'] {
+    color: var(--color-brand);
+    background: white;
+    box-shadow: 0 1px 4px #032e6e1a;
+    font-weight: 700;
+  }
+  .seat-map-scroll {
+    overflow: auto;
+    max-width: 100%;
+    border: 1px solid var(--color-line);
+    border-radius: 8px;
+    background: #f6f7f8;
+    scrollbar-color: #9bacbf #eef1f5;
+  }
+  .seat-map-canvas {
+    position: relative;
+    width: 100%;
+    container-type: inline-size;
+  }
+  .seat-map-canvas.is-zoomed {
+    min-width: 1480px;
+  }
+  .seat-map-canvas > img {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-width: none;
+    user-select: none;
+  }
+  .map-seat.seat {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    width: 3.05%;
+    height: 6.85%;
+    min-height: 0;
+    border-radius: 3px;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.1;
+    box-shadow: none;
+    border: 1px solid #699c85;
+    background: #eaf6ef;
+    color: #1a5a42;
+    scroll-margin: 20px;
+  }
+  .map-seat.seat span {
+    font-size: clamp(5px, 0.95cqw, 19px);
+    font-weight: 750;
+    letter-spacing: -0.02em;
+  }
+  .map-seat.seat small {
+    font-size: clamp(5px, 0.8cqw, 16px);
+    line-height: 1;
+  }
+  .map-seat.free:hover,
+  .map-seat.free:focus-visible {
+    border-color: var(--color-brand);
+    background: #d6e9ff;
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+    z-index: 2;
+  }
+  .map-seat.selected.free {
+    color: white;
+    background: var(--color-brand);
+    border-color: var(--color-navy);
+    box-shadow: 0 2px 8px #032e6e40;
+  }
+  .map-seat.unavailable,
+  .map-seat.loading {
+    background: #e6ebf0;
+    color: #536176;
+    border-color: #9fabbb;
+  }
+  .map-seat.disabled {
+    background: repeating-linear-gradient(45deg, #d6dde5 0 2px, #edf0f4 2px 6px);
+    color: #455469;
+    border-color: #9fabbb;
+  }
+  .map-seat.error {
+    background: #fff0e3;
+    border-color: #ad7040;
+    color: #855326;
+  }
+  .seat-map-help {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--color-muted);
+    margin: 12px 0 18px;
+  }
+  .seat-map-selection {
+    border: 1px solid #d7e4f4;
+    border-radius: 8px;
+    padding: 14px 18px;
+    background: #f1f6fc;
+    font-size: 12px;
+  }
+  .seat-map-selection strong {
+    color: var(--color-brand);
+  }
+  .seat-map-selection a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+  @media (max-width: 1250px) {
+    .reading-layout > .booking-summary {
+      grid-column: 1;
+      grid-row: 4;
+    }
+  }
+  @media (max-width: 767px) {
+    .image-seat-picker {
+      padding: 20px 12px;
+    }
+    .seat-map-controls button {
+      padding-inline: 11px;
+    }
+    .seat-map-selection {
+      padding: 12px;
+    }
+    .seat-map-help {
+      font-size: 10px;
+    }
+  }
+}

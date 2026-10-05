@@ -6,12 +6,14 @@ import com.hansung.hsp.common.ApiException;
 import com.hansung.hsp.reservation.*;
 import com.hansung.hsp.space.*;
 import com.hansung.hsp.user.*;
+import com.hansung.hsp.policy.*;
 import jakarta.servlet.http.Cookie;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.*;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -67,6 +69,17 @@ class HspBackendApplicationTests {
     @Autowired PasswordEncoder encoder;
     @Autowired ReservationService reservationService;
     @Autowired SpaceBlockService blockService;
+    @Autowired org.springframework.security.web.FilterChainProxy securityFilters;
+    @Autowired org.springframework.security.web.csrf.CsrfTokenRepository csrfRepository;
+
+    @BeforeEach void restoreProductionCsrfRepository() {
+        // SecurityMockMvcRequestPostProcessors.csrf() replaces the filter repository.
+        // Restore it between tests so real cookie/session tests are order-independent.
+        securityFilters.getFilters("/api/auth/csrf").stream()
+                .filter(org.springframework.security.web.csrf.CsrfFilter.class::isInstance)
+                .map(org.springframework.security.web.csrf.CsrfFilter.class::cast)
+                .forEach(filter -> org.springframework.test.util.ReflectionTestUtils.setField(filter, "tokenRepository", csrfRepository));
+    }
 
     private String unique() { return UUID.randomUUID().toString().substring(0, 18); }
     private User user(String role) {
@@ -105,7 +118,7 @@ class HspBackendApplicationTests {
 
     @Test void flywayAndHibernateValidateRealPostgresSchema() {
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success", Integer.class))
-                .isEqualTo(2);
+                .isEqualTo(3);
         assertThat(jdbc.queryForObject("select type from flyway_schema_history where version='1'", String.class))
                 .isEqualTo("SQL");
     }
@@ -416,6 +429,67 @@ class HspBackendApplicationTests {
                 .andExpect(status().isOk()).andExpect(header().string("Access-Control-Allow-Credentials", "true"));
         mvc.perform(options("/api/reservations").header("Origin", "https://untrusted.example")
                         .header("Access-Control-Request-Method", "POST")).andExpect(status().isForbidden());
+    }
+
+    private OperatingPolicyInput operatingPolicy(boolean enabled, java.time.LocalDate examDate) {
+        var hours = new ArrayList<OperatingHoursInput>();
+        for (var period : OperatingPeriod.values()) for (var day : java.time.DayOfWeek.values()) {
+            hours.add(new OperatingHoursInput(period, day, false,
+                    period == OperatingPeriod.EXAM ? "00:00" : "09:00",
+                    period == OperatingPeriod.EXAM ? "24:00" : "18:00"));
+        }
+        return new OperatingPolicyInput(enabled, OperatingPeriod.SEMESTER, examDate, examDate, hours);
+    }
+    private ResultActions savePolicy(User admin, Space space, OperatingPolicyInput input) throws Exception {
+        return mvc.perform(as(put("/api/admin/spaces/" + space.getId() + "/policy"), admin)
+                .with(csrf().asHeader()).contentType("application/json").content(json.writeValueAsString(input)));
+    }
+    @Test void operatingPolicyRequiresAdminScopeAndCsrf() throws Exception {
+        var space = room(true);
+        var admin = manager(space);
+        var input = operatingPolicy(true, null);
+        mvc.perform(get("/api/spaces/" + space.getId() + "/policy")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.configured").value(false));
+        savePolicy(user("STUDENT"), space, input).andExpect(status().isForbidden());
+        savePolicy(user("ADMIN"), space, input).andExpect(status().isForbidden());
+        mvc.perform(as(put("/api/admin/spaces/" + space.getId() + "/policy"), admin)
+                .contentType("application/json").content(json.writeValueAsString(input))).andExpect(status().isForbidden());
+        savePolicy(admin, space, input).andExpect(status().isOk()).andExpect(jsonPath("$.hours.length()").value(21));
+        mvc.perform(options("/api/admin/spaces/" + space.getId() + "/policy").header("Origin", "http://localhost:5173")
+                .header("Access-Control-Request-Method", "PUT").header("Access-Control-Request-Headers", "Content-Type,X-XSRF-TOKEN"))
+                .andExpect(status().isOk());
+    }
+    @Test void operatingPolicyFiltersAvailabilityAndValidatesNewReservationsWithoutChangingExistingOnes() throws Exception {
+        var space = room(true); var admin = manager(space); var student = user("STUDENT");
+        var date = java.time.LocalDate.now(OperatingCalendar.ZONE).plusDays(4);
+        var early = date.atTime(7, 0).atZone(OperatingCalendar.ZONE).toInstant();
+        var existing = create(student, booking(space, early, early.plusSeconds(3600))).andExpect(status().isCreated()).andReturn();
+        savePolicy(admin, space, operatingPolicy(true, null)).andExpect(status().isOk());
+        create(student, booking(space, early.plusSeconds(3600), early.plusSeconds(5400)))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("OUTSIDE_OPERATING_HOURS"));
+        var from = date.atStartOfDay(OperatingCalendar.ZONE).toInstant();
+        mvc.perform(get("/api/spaces/" + space.getId() + "/availability").param("startTime", from.toString())
+                .param("endTime", from.plusSeconds(86400).toString())).andExpect(status().isOk())
+                .andExpect(jsonPath("$.policyScope").value("OPERATING_HOURS_AND_OCCUPANCY"))
+                .andExpect(jsonPath("$.available[0].startTime").value(date.atTime(9, 0).atZone(OperatingCalendar.ZONE).toInstant().toString()));
+        savePolicy(admin, space, operatingPolicy(true, date)).andExpect(status().isOk());
+        create(student, booking(space, early.plusSeconds(3600), early.plusSeconds(5400))).andExpect(status().isCreated());
+        assertThat(reservations.findById(id(existing)).orElseThrow().getStatus()).isEqualTo(ReservationStatus.UPCOMING);
+        savePolicy(admin, space, operatingPolicy(false, null)).andExpect(status().isOk());
+        create(student, booking(space, early.plusSeconds(5400), early.plusSeconds(6000))).andExpect(status().isCreated());
+    }
+    @Test void malformedOperatingPoliciesAreRejected() throws Exception {
+        var space = room(true); var admin = manager(space);
+        var input = operatingPolicy(true, null);
+        var duplicate = new ArrayList<>(input.hours()); duplicate.set(1, duplicate.getFirst());
+        savePolicy(admin, space, new OperatingPolicyInput(true, OperatingPeriod.SEMESTER, null, null, duplicate))
+                .andExpect(status().isBadRequest());
+        var invalid = new ArrayList<>(input.hours());
+        invalid.set(0, new OperatingHoursInput(OperatingPeriod.SEMESTER, java.time.DayOfWeek.MONDAY, false, "25:00", "24:00"));
+        savePolicy(admin, space, new OperatingPolicyInput(true, OperatingPeriod.SEMESTER, null, null, invalid))
+                .andExpect(status().isBadRequest());
+        savePolicy(admin, space, new OperatingPolicyInput(true, OperatingPeriod.EXAM, null, null, input.hours()))
+                .andExpect(status().isBadRequest());
     }
 
     private List<String> race(Callable<?> first, Callable<?> second) throws Exception {

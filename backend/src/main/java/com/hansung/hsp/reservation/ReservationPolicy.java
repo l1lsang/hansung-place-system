@@ -41,8 +41,7 @@ public class ReservationPolicy {
                 throw ApiException.badRequest("CAPACITY_VIOLATION", "예약자를 포함한 인원이 공간의 수용 인원 조건에 맞지 않습니다.");
             }
         }
-        // TODO: operating hours, booking horizon/duration and exam-period rules
-        // require university policy. No such rules exist in the current schema.
+        // Operating hours/exam dates are checked by OperatingPolicyService under the space lock.
+        // Booking horizon and per-user duration limits have not been specified.
     }
 }
-

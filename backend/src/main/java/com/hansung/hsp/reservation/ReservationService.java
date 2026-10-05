@@ -3,6 +3,7 @@ package com.hansung.hsp.reservation;
 import com.hansung.hsp.admin.AdminAccessService;
 import com.hansung.hsp.common.*;
 import com.hansung.hsp.space.*;
+import com.hansung.hsp.policy.OperatingPolicyService;
 import com.hansung.hsp.user.UserRepository;
 import java.time.Clock;
 import java.util.List;
@@ -24,10 +25,11 @@ public class ReservationService {
     private final ReservationPolicy policy;
     private final AdminAccessService access;
     private final Clock clock;
+    private final OperatingPolicyService operatingPolicies;
 
     public ReservationService(ReservationRepository reservations, ReservationMemberRepository members,
             SpaceService spaces, SeatService seats, SpaceBlockRepository blocks, UserRepository users,
-            ReservationPolicy policy, AdminAccessService access, Clock clock) {
+            ReservationPolicy policy, AdminAccessService access, Clock clock, OperatingPolicyService operatingPolicies) {
         this.reservations = reservations;
         this.members = members;
         this.spaces = spaces;
@@ -37,6 +39,7 @@ public class ReservationService {
         this.policy = policy;
         this.access = access;
         this.clock = clock;
+        this.operatingPolicies = operatingPolicies;
     }
 
     @Transactional(timeout = 10)
@@ -47,6 +50,7 @@ public class ReservationService {
         var space = spaces.lock(input.spaceId());
         var user = users.findById(userId).orElseThrow(ForbiddenException::new);
         policy.validate(space, user, input);
+        operatingPolicies.validateReservation(space.getId(), new TimeRange(input.startTime(), input.endTime()));
         if (input.kind() == ReservationKind.BOOKING && seats.hasSeats(space.getId())) {
             throw ApiException.badRequest("SEAT_REQUIRED", "좌석이 있는 공간은 SEAT_USE와 좌석 ID를 지정해주세요.");
         }
@@ -127,4 +131,3 @@ public class ReservationService {
         return PageResponse.from(page.map(r -> ReservationResponse.from(r, grouped.getOrDefault(r.getId(), List.of()))));
     }
 }
-

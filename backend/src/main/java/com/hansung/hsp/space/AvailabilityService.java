@@ -2,6 +2,8 @@ package com.hansung.hsp.space;
 
 import com.hansung.hsp.common.*;
 import com.hansung.hsp.reservation.ReservationRepository;
+import com.hansung.hsp.policy.OperatingCalendar;
+import com.hansung.hsp.policy.OperatingPolicyService;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -16,13 +18,15 @@ public class AvailabilityService {
     private final SeatService seats;
     private final SpaceBlockRepository blocks;
     private final ReservationRepository reservations;
+    private final OperatingPolicyService policies;
 
     public AvailabilityService(SpaceService spaces, SeatService seats, SpaceBlockRepository blocks,
-            ReservationRepository reservations) {
+            ReservationRepository reservations, OperatingPolicyService policies) {
         this.spaces = spaces;
         this.seats = seats;
         this.blocks = blocks;
         this.reservations = reservations;
+        this.policies = policies;
     }
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
@@ -43,10 +47,16 @@ public class AvailabilityService {
                 .forEach(r -> occupied.add(new TimeRange(r.getStartTime(), r.getEndTime())));
         blocks.findOverlapping(spaceId, start, end)
                 .forEach(b -> occupied.add(new TimeRange(b.getStartTime(), b.getEndTime())));
-        // This is an occupancy snapshot, never a guarantee that a later POST will succeed.
-        // TODO: intersect with approved university opening-hours/calendar policy when provided.
-        return new AvailabilityResponse(spaceId, seatId, start, end, enabled, "OCCUPANCY_ONLY",
-                enabled ? TimeRanges.available(window, occupied) : List.of());
+        var policy = policies.find(spaceId);
+        var available = new ArrayList<TimeRange>();
+        if (enabled) {
+            for (var open : OperatingCalendar.openWindows(policy, window)) {
+                available.addAll(TimeRanges.available(open, occupied));
+            }
+        }
+        // A snapshot, never a guarantee that a later POST will succeed.
+        return new AvailabilityResponse(spaceId, seatId, start, end, enabled,
+                policy != null && policy.isEnabled() ? "OPERATING_HOURS_AND_OCCUPANCY" : "OCCUPANCY_ONLY",
+                List.copyOf(available));
     }
 }
-

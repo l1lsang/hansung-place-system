@@ -45,8 +45,8 @@ public class SpaceController {
     }
 
     @GetMapping("/{spaceId}/availability")
-    @Operation(summary = "요청 구간의 비점유 시간", description = "좌석 공간에는 seatId가 필요합니다. "
-            + "시간은 ISO-8601 offset 포함, 한 번에 최대 31일. 운영 시간/학사 정책은 아직 포함하지 않습니다.")
+    @Operation(summary = "요청 구간의 예약 가능 시간", description = "좌석 공간에는 seatId가 필요합니다. "
+            + "시간은 ISO-8601 offset 포함, 한 번에 최대 31일. 활성화된 운영시간/시험기간 정책과 예약/차단을 반영합니다. policyScope로 적용 범위를 확인합니다.")
     public AvailabilityResponse availability(@PathVariable @Positive Long spaceId,
             @RequestParam(required = false) @Positive Long seatId,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant startTime,
@@ -54,4 +54,3 @@ public class SpaceController {
         return availability.get(spaceId, seatId, startTime, endTime);
     }
 }
-
